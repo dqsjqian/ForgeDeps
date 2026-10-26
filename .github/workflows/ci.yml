@@ -13,20 +13,24 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PYTHON_VERSION: '3.14'
+
 jobs:
   tests:
-    name: Offline contracts (${{ matrix.os }}, Python ${{ matrix.python }})
+    name: Offline contracts (${{ matrix.os }}, Python ${{ env.PYTHON_VERSION }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ['3.10', '3.13']
     steps:
       - uses: actions/checkout@v7
+      # Project policy: only the latest stable CPython is supported and tested.
+      # Raising this pin is a deliberate change, not a matrix expansion.
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: ${{ env.PYTHON_VERSION }}
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
       - name: Install distribution

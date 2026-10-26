@@ -18,6 +18,7 @@ import subprocess
 import tarfile
 import tempfile
 from types import SimpleNamespace
+from urllib.error import URLError
 from urllib.parse import unquote, urlsplit
 from urllib.request import url2pathname
 import zipfile
@@ -88,7 +89,12 @@ def fetch_download(url: str, sha256: str, directory: Path, *, offline: bool = Fa
     if parsed.scheme == "file":
         if parsed.netloc not in ("", "localhost") or parsed.query or parsed.fragment:
             raise ValueError("Local source file URLs cannot name a remote host or query")
-        local = Path(url2pathname(parsed.path))
+        try:
+            # Python 3.14 rejects a network-path reference inside url2pathname;
+            # report the same contract error as the explicit checks below.
+            local = Path(url2pathname(parsed.path))
+        except URLError as error:
+            raise ValueError("Local source file URLs must name an absolute non-UNC path") from error
         if not local.is_absolute() or str(local).startswith(("//", "\\\\")):
             raise ValueError("Local source file URLs must name an absolute non-UNC path")
     else:
