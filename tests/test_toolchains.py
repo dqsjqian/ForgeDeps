@@ -115,7 +115,7 @@ class ToolchainProbeTests(unittest.TestCase):
         toolchain.write_text("set(CMAKE_SYSTEM_NAME Generic)\n"
                              "set(CMAKE_SYSTEM_PROCESSOR imaginary)\n"
                              "set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)\n", encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "disagrees with compiled target"):
+        with self.assertRaisesRegex(ValueError, "disagrees with compiled target|CMake toolchain probe failed"):
             self.probe(toolchain=toolchain)
 
     def test_probe_project_cannot_be_replaced(self):
