@@ -152,11 +152,32 @@ class DependencyTests(unittest.TestCase):
             self.resolve(versions={"typo": "1.0"})
         self.assertNotIn("resolved", json.loads(self.manifest.read_text())["dependencies"]["library"])
 
-    def test_explicit_branch_or_prerelease_is_rejected_before_network(self):
-        for version in ["main", "2.0.0-rc1", "v2.0.0-beta", "../bad"]:
+    def test_explicit_branch_or_malformed_version_is_rejected_before_network(self):
+        for version in ["main", "latest-mira", "2.0.0-", "2.0.0-rc..1", "../bad"]:
             with self.subTest(version=version), self.assertRaises(deps.DependencyError):
                 self.resolve(versions={"library": version})
         self.assertEqual(self.context.calls, [])
+
+    def test_explicit_downstream_and_prerelease_versions_remain_pinned(self):
+        for version in ["1.70.0-mira.1", "2.0.0-rc1"]:
+            with self.subTest(version=version):
+                record = self.resolve(versions={"library": version})["dependencies"]["library"]
+                self.assertEqual(record["version"], version)
+                self.assertEqual(record["tag"], "v" + version)
+                self.assertEqual(record["revision"], SHA)
+                self.context.calls.clear()
+                self.context.offline = True
+                self.assertEqual(self.resolve(versions={"library": version})["dependencies"]["library"], record)
+                self.assertEqual(self.context.calls, [])
+                self.context.offline = False
+
+    def test_downstream_versions_are_not_selected_automatically(self):
+        self.context.releases.append({"tag_name": "v9.0.0-mira.1", "prerelease": False})
+        self.assertEqual(self.resolve()["dependencies"]["library"]["version"], "1.10.0")
+
+    def test_explicit_draft_release_is_rejected(self):
+        with self.assertRaisesRegex(deps.DependencyError, "published"):
+            self.resolve(versions={"library": "99.0.0"})
 
     def test_override_outside_selection_is_not_silently_ignored(self):
         self.write_manifest({"library": SOURCE, "other": SOURCE})

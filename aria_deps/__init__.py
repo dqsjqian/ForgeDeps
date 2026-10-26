@@ -9,23 +9,33 @@ the mechanism.
 from .deps_build import (
     Dependency,
     DependencyError,
+    Context,
     ProjectConfig,
     cache_key,
     init_project,
     install,
     register_provider,
+    resolve,
+    read_resolved,
     update_lock,
     verify,
 )
+from .source_cache import bootstrap_git, fetch_archive, fetch_file
 
 __all__ = [
     "Dependency",
     "DependencyError",
+    "Context",
     "ProjectConfig",
     "cache_key",
     "init_project",
     "install",
     "register_provider",
+    "resolve",
+    "read_resolved",
     "update_lock",
     "verify",
+    "bootstrap_git",
+    "fetch_archive",
+    "fetch_file",
 ]

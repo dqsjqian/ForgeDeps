@@ -10,8 +10,9 @@ Extracted from [AriaRead](https://github.com/dqsjqian/AriaRead)'s `tools/build.p
 
 - **Resolve**: `dependencies.json` lock records (GitHub/sqlite.org/bellard.org
   providers, pluggable) → pinned versions, URLs, SHA256
-- **Fetch**: download archives (SHA256-verified) or git clone into editable
-  `deps/<name>/` workspaces (user edits are preserved, tracked by content)
+- **Fetch**: verified immutable archive/file caches for source-tree consumers,
+  transactional Git bootstrapping, or editable `deps/<name>/` workspaces for
+  prefix builds (user edits are preserved, tracked by content)
 - **Build**: per-dependency recipes (`cmake` / `openssl` / `generated` kinds),
   patches applied to disposable snapshots (never touches user sources)
 - **Install**: transactional prefix install with manifest, component reuse by
@@ -25,8 +26,60 @@ Python 3.10 or newer is required. Install the released package into the same
 Python environment that runs your build entry point:
 
 ```bash
-python -m pip install "git+https://github.com/dqsjqian/AriaDeps.git@v0.1.1"
+python -m pip install "git+https://github.com/dqsjqian/AriaDeps.git@v0.3.0"
 ```
+
+Projects can share the resolver and source cache while choosing their own
+build model: use the source with `add_subdirectory`, or install dependencies
+into a verified prefix with project-supplied recipes. Platform SDKs, Qt,
+Android Gradle packaging and toolchain selection remain the consumer's policy.
+
+### Command line and CMake
+
+The `aria-deps` command and `python -m aria_deps` are equivalent. JSON results
+go to stdout; progress and native build output go to stderr.
+
+```bash
+aria-deps resolve --file dependencies.json --offline
+aria-deps read --file dependencies.json --only json
+aria-deps fetch-git --file dependencies.json --name library --destination deps/library
+aria-deps cmake-dir
+```
+
+Resolution reuses the locked selection unless explicitly updated. `--output`
+writes an effective lock outside the input, useful for CMake configuration.
+`--version library=1.2.3-vendor.1` selects an explicit published downstream tag;
+explicit prereleases are also supported. Automatic `latest` selection excludes
+prereleases and downstream suffixes. Every GitHub selection pins its full Git
+revision, and archives/files pin their SHA256.
+
+`fetch-archive` and `fetch-file` require a URL, SHA256 and cache directory. They
+validate downloads and existing extracted contents on every call. Local edits
+are rejected and preserved. Offline calls use only already populated caches.
+The immutable cache is separate from editable prefix-build workspaces. A new
+cache requires one online population; old project-specific caches are not
+silently trusted or deleted.
+
+`fetch-git` verifies the locked commit and refuses dirty, linked-worktree and
+symlink destinations. Updates stage a new checkout before replacing the old
+one; failures restore the old lock and checkout. Successful replacements retain
+the previous checkout as a sibling backup. `--source` accepts an explicit local
+repository or mirror; with `--offline`, it must be local and contain the commit.
+
+The installed `cmake/AriaDeps.cmake` exposes `aria_deps_resolve`,
+`aria_deps_fetch_archive` and `aria_deps_fetch_file`. It delegates all resolution
+and fetching to the same Python implementation. The independent
+[hello-json example](examples/hello-json) shows a complete C++ consumer that
+does not depend on any Aria library:
+
+```bash
+cmake -S examples/hello-json -B build/hello-json
+cmake --build build/hello-json --config Release
+ctest --test-dir build/hello-json -C Release --output-on-failure
+cmake -S examples/hello-json -B build/hello-json -DEXAMPLE_OFFLINE=ON
+```
+
+### Prefix builds
 
 ```python
 from pathlib import Path
@@ -72,11 +125,32 @@ for compatibility with existing callers. Hooks must be source-readable Python
 functions defined in a file; built-ins and dynamically created functions are
 rejected with a diagnostic because their implementation cannot be fingerprinted.
 
+The same operations are available through the CLI. The configuration module
+must export `CONFIG` or `make_config()` returning a `ProjectConfig`:
+
+```bash
+aria-deps install --project-config recipes.py --file dependencies.json --work build/deps --build-config Debug
+aria-deps verify --project-config recipes.py --file dependencies.json --work build/deps --build-config Debug
+```
+
+Pass the same compiler, toolchain, configuration and `--cmake-option=-DNAME=VALUE`
+arguments to both operations. A mismatch fails without modifying the prefix.
+
 ## Layout
 
 All directories are caller-provided; nothing is hardcoded to a repository root.
 The dependency work directory follows the build directory, so each
 compiler/build-dir gets isolated snapshots, caches and installed libraries.
+
+Recipes with `requires` must be listed after their prerequisites. There is no
+version-constraint solver or remote binary registry. Prefixes are tied to their
+recorded location and build environment. This is a reproducible source-selection
+and build-validation mechanism, not a hermetic SDK or a guarantee that every
+compiler emits byte-identical binaries. Consumers must explicitly identify
+external SDKs and libraries that affect their recipes.
+
+See [dependency maintenance](docs/DEPENDENCY-MAINTENANCE.md) for downstream fork
+policy and release requirements.
 
 ## Tests
 

@@ -170,7 +170,7 @@ def dependency_spec(entry: dict) -> dict:
 
 
 def request_hash(spec: dict) -> str:
-    """Portable length-prefixed UTF-8 encoding, also implemented by CMake."""
+    """Portable length-prefixed UTF-8 encoding for request identities."""
     encoded = bytearray(b"aria-dependency-request-v1\n")
     for key, value in sorted(spec.items()):
         if not re.fullmatch(r"[a-z][a-z0-9_]*", key) or not isinstance(value, str):
@@ -266,14 +266,18 @@ def https_url(url: str) -> str:
 
 
 class Context:
-    def __init__(self, cache_dir: Path, offline: bool = False):
+    def __init__(self, cache_dir: Path, offline: bool = False, *, user_agent: str | None = None):
         self.cache_dir = cache_dir
         self.offline = offline
+        self.user_agent = user_agent
+
+    def request_user_agent(self) -> str:
+        return self.user_agent if self.user_agent is not None else _project().user_agent
 
     def get_bytes(self, url: str) -> bytes:
         if self.offline:
             raise DependencyError("Offline resolution requires a matching lock record")
-        request = urllib.request.Request(https_url(url), headers={"User-Agent": _project().user_agent})
+        request = urllib.request.Request(https_url(url), headers={"User-Agent": self.request_user_agent()})
         with urllib.request.urlopen(request, timeout=120) as response:
             https_url(response.url)
             return response.read()
@@ -314,7 +318,7 @@ class Context:
         # during an explicit update. Normal locked builds never call here.
         with tempfile.TemporaryDirectory(prefix="resolve-", dir=self.cache_dir) as temporary:
             archive = Path(temporary) / "download"
-            request = urllib.request.Request(url, headers={"User-Agent": _project().user_agent})
+            request = urllib.request.Request(url, headers={"User-Agent": self.request_user_agent()})
             with urllib.request.urlopen(request, timeout=120) as response, archive.open("wb") as output:
                 https_url(response.url)
                 while chunk := response.read(1024 * 1024):
@@ -334,14 +338,15 @@ class Context:
             return actual
 
 
-def tag_version(tag: str, spec: dict) -> str | None:
+def tag_version(tag: str, spec: dict, *, explicit: bool = False) -> str | None:
     prefix = spec.get("tag_prefix", "v")
     if not tag.startswith(prefix):
         return None
     version = tag[len(prefix):].replace(spec.get("tag_separator", "."), ".")
-    # Never turn a prerelease, nightly, branch name or floating tag into the
-    # default stable release. Explicit versions still need a real Git tag.
-    if re.fullmatch(r"\d+(?:\.\d+){0,3}(?:\+[0-9A-Za-z.-]+)?", version):
+    # Automatic selection stays stable. An explicit version may name a
+    # prerelease or downstream patch, but still has to resolve to a real tag.
+    suffix = r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?" if explicit else ""
+    if re.fullmatch(r"\d+(?:\.\d+){0,3}" + suffix + r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?", version):
         return version
     return None
 
@@ -417,11 +422,11 @@ def resolve_github(spec: dict, requested: str, context: Context) -> dict:
         tag = spec.get("tag_template", "{prefix}{separated_version}").format(
             prefix=prefix, version=version, version_underscore=version.replace(".", "_"),
             separated_version=version.replace(".", separator))
-        if requested.strip() != requested or tag_version(tag, spec) != version:
-            raise DependencyError("Explicit dependency versions must be stable release versions")
+        if requested.strip() != requested or tag_version(tag, spec, explicit=True) != version:
+            raise DependencyError("Explicit dependency versions must be numeric tagged versions")
         release = context.github_json(f"repos/{repo}/releases/tags/{urllib.parse.quote(tag, safe='')}")
-        if release and (release.get("draft") or release.get("prerelease")):
-            raise DependencyError("Dependency versions must select stable, published releases")
+        if release and release.get("draft"):
+            raise DependencyError("Dependency versions must select published releases")
     revision = tag_revision(context, repo, tag)
     record = {"version": version, "tag": tag, "revision": revision}
     if artifact == "git":
@@ -1370,7 +1375,7 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def download(cache: Path, dependency: Dependency, offline: bool) -> Path:
+def download(cache: Path, dependency: Dependency, offline: bool, *, user_agent: str | None = None) -> Path:
     """Download (or reuse) the archive and verify its SHA256."""
     archive = cache / (dependency.sha256 + "-" + dependency.archive_name)
     if archive.is_symlink():
@@ -1395,7 +1400,7 @@ def download(cache: Path, dependency: Dependency, offline: bool) -> Path:
         raise ValueError(f"Offline cache missing: {archive}")
 
     request = urllib.request.Request(dependency.url,
-                                     headers={"User-Agent": _project().user_agent})
+                                     headers={"User-Agent": user_agent if user_agent is not None else _project().user_agent})
     print(f"Downloading: {dependency.url}\nExpected SHA256: {expected or '(not pinned)'}",
           flush=True)
     # An interrupted download or a failed verification only removes this run's

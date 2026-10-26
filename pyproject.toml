@@ -4,13 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aria-deps"
-version = "0.2.1"
+version = "0.3.0"
 description = "Project-agnostic dependency pipeline: resolve, fetch, patch, build and install C/C++ dependencies"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 
 [project.optional-dependencies]
 test = []
+
+[project.scripts]
+aria-deps = "aria_deps.__main__:main"
+
+[tool.setuptools.package-data]
+aria_deps = ["cmake/*.cmake"]
 
 [tool.setuptools.packages.find]
 where = ["."]

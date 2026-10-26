@@ -1,0 +1,22 @@
+{
+  "dependencies": {
+    "json": {
+      "artifact": "release-asset",
+      "asset": "json.tar.xz",
+      "provider": "github",
+      "repo": "nlohmann/json",
+      "resolved": {
+        "checksum_source": "downloaded-over-https",
+        "request_hash": "baa350ef77c98d8ffe6b2094634ff0fb558dc6c28441274545b8b70ff7d6580d",
+        "requested": "latest",
+        "revision": "55f93686c01528224f448c19128836e7df245f72",
+        "sha256": "42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa",
+        "tag": "v3.12.0",
+        "url": "https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz",
+        "version": "3.12.0"
+      },
+      "tag_prefix": "v"
+    }
+  },
+  "schema": 2
+}
