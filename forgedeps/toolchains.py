@@ -413,7 +413,9 @@ def probe_toolchain(*, configuration="Release", c=None, cxx=None, toolchain=None
                 inputs[str(path)] = _sha256(path)
         tools = {"cmake": {**cmake, "version": index["cmake"]["version"]["string"]}}
         for variable in ("CMAKE_MAKE_PROGRAM", "CMAKE_AR", "CMAKE_RANLIB", "CMAKE_LINKER", "CMAKE_RC_COMPILER"):
-            if record[variable]:
+            if record[variable] and not (variable == "CMAKE_RANLIB" and record[variable] == ":"):
+                # MSVC archives do not use ranlib; CMake records the no-op ':'
+                # rather than a binary. Keep that value in cmake, not tools.
                 tools[variable.removeprefix("CMAKE_").lower()] = _executable(record[variable], env)
         result = {"label": label, "platform": platform, "machine": machine,
                   "configuration": configuration, **compilers, "cmake": record,
@@ -432,6 +434,10 @@ def probe_toolchain(*, configuration="Release", c=None, cxx=None, toolchain=None
                   "sdk": _sdk(record, actual_compilers, env),
                   "environment": {key: env[key] for key in sorted(_BUILD_ENV) if env.get(key)},
                   "cmake_options": options}
+        quote = subprocess.list2cmdline if os.name == "nt" else shlex.join
+        for variable, key in (("CC", "c"), ("CXX", "cxx")):
+            result["environment"][variable] = quote([
+                compilers[key]["path"], *compilers[key].get("arguments", [])])
         # File API backtraces are indexes into this temporary project, not ABI.
         def stable(value):
             if isinstance(value, dict):

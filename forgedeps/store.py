@@ -15,6 +15,8 @@ import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
+import shlex
+import subprocess
 import stat
 import tempfile
 import time
@@ -326,8 +328,20 @@ def _prepare_request(request, home, *, create):
     if not isinstance(environment, dict) or any(not isinstance(k, str) or not isinstance(v, str)
                                                 for k, v in environment.items()):
         raise ValueError("Build environment must map string names to string values")
-    environment = {**{key: os.environ[key] for key in BUILD_ENVIRONMENT_KEYS if key in os.environ},
-                   **environment}
+    # Pure headers have no ambient compiler inputs. Explicit recipe environment
+    # still participates, but CMake's first-configure CC/CXX exports do not.
+    inherited = {} if request.header_only else {
+        key: os.environ[key] for key in BUILD_ENVIRONMENT_KEYS if key in os.environ}
+    environment = {**inherited, **environment}
+    # A probed compiler is authoritative. CMake exports CC/CXX during its first
+    # configure but not cached reconfiguration; normalize those selectors to the
+    # actual compiler/arguments so equivalent consumption sessions share identity.
+    for variable, key in (("CC", "c"), ("CXX", "cxx")):
+        compiler = target.get(key)
+        if isinstance(compiler, dict) and compiler.get("path"):
+            command = [compiler["path"], *compiler.get("arguments", [])]
+            quote = subprocess.list2cmdline if os.name == "nt" else shlex.join
+            environment[variable] = quote(command)
     artifacts = tuple(_relative(path) for path in request.artifacts)
     licenses = tuple(_relative(path) for path in request.license_files)
     if len({Path(path).name for path in licenses}) != len(licenses):

@@ -70,6 +70,21 @@ class SessionTests(unittest.TestCase):
                 assert_parent_covers_environment(Environment((other,)), environment)
             assert_parent_covers_environment(Environment((self.artifact,)), environment)
 
+    def test_explicit_shared_prefix_is_leased_without_generated_receipt(self):
+        self.receipt.unlink()
+        cache = self.root / "build/CMakeCache.txt"
+        cache.write_text("CMAKE_PREFIX_PATH:PATH=" + str(self.artifact.prefix) + "\n")
+        seen = []
+        def execute(command, environment):
+            if command[0] == "build":
+                assert_parent_covers_environment(Environment((self.artifact,)), environment)
+                with self.assertRaisesRegex(ValueError, "active lease"):
+                    build_package(self.request, home=self.home, force=True)
+                seen.append(True)
+        run_session([["cmake", "-S", ".", "-B", str(cache.parent)], ["build"]],
+                    env={}, cwd=self.root, run_command=execute)
+        self.assertEqual(seen, [True])
+
     def test_conflicting_generations_stop_before_build(self):
         newer = build_package(replace(self.request, options={"flag": True}), home=self.home)
         second = self.root / "second.json"

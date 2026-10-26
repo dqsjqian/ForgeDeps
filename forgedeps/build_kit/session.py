@@ -12,6 +12,7 @@ import sys
 import tempfile
 
 from ..artifacts import Environment
+from ..store import verify_artifact
 from ..environments import read_environment
 from ..home import resolve_home
 from ..leases import artifact_graph
@@ -43,7 +44,7 @@ def _parent_receipts(environment):
 def merge_environments(paths) -> Environment:
     roots = []
     for path in paths:
-        roots.extend(read_environment(Path(path)).artifacts)
+        roots.extend((path if isinstance(path, Environment) else read_environment(Path(path))).artifacts)
     # The graph rejects different fingerprints/generations for the same slot,
     # including conflicts which occur only in transitive dependencies.
     graph = artifact_graph(roots)
@@ -87,6 +88,40 @@ def _find_receipts(directories):
             if not unrelated:
                 found.add(path.resolve())
     return sorted(found, key=str)
+
+
+def _prefix_environments(directories, environment):
+    """Cover verified shared SDKs supplied directly through CMake search paths."""
+    prefixes = set()
+    for value in environment.get("CMAKE_PREFIX_PATH", "").split(os.pathsep):
+        if value:
+            prefixes.add(Path(value).expanduser().absolute())
+    for directory in directories:
+        cache = directory / "CMakeCache.txt"
+        if not cache.is_file():
+            continue
+        for line in cache.read_text(encoding="utf-8").splitlines():
+            if "=" not in line or line.startswith(("#", "//")):
+                continue
+            key, value = line.split("=", 1)
+            name = key.split(":", 1)[0]
+            if name != "CMAKE_PREFIX_PATH" and not name.endswith("_DIR"):
+                continue
+            for item in value.split(";"):
+                path = Path(item)
+                if not item or not path.is_absolute():
+                    continue
+                if name == "CMAKE_PREFIX_PATH":
+                    prefixes.add(path)
+                else:
+                    # Foo_DIR commonly points below a shared prefix's lib/cmake.
+                    for candidate in (path, *path.parents):
+                        if (candidate / "manifest.json").is_file():
+                            prefixes.add(candidate)
+                            break
+    roots = [verify_artifact(path) for path in sorted(prefixes, key=str)
+             if (path / "manifest.json").exists()]
+    return [Environment(tuple(roots))] if roots else []
 
 
 @contextmanager
@@ -144,13 +179,15 @@ def run_session(commands, *, cwd=None, env=None, run_command=None,
                       for index, command in enumerate(commands)]
     configurations = [(index, path) for index, path in configurations if path is not None]
     inherited = _parent_receipts(environment)
-    first = configurations[0][0] if configurations else (0 if receipts or inherited is not None else len(commands))
+    first = configurations[0][0] if configurations else (
+        0 if receipts or inherited is not None or environment.get("CMAKE_PREFIX_PATH") else len(commands))
     for command in commands[:first]:
         execute(command, environment)
     if inherited is None:
         for index, _ in configurations:
             execute(commands[index], environment)
-    paths = list(receipts) + _find_receipts([path for _, path in configurations])
+    directories = [path for _, path in configurations]
+    paths = list(receipts) + _find_receipts(directories) + _prefix_environments(directories, environment)
     # In a nested session the parent already owns the selected union. Include
     # it so nested configure-only commands cannot accidentally drop coverage.
     if inherited is not None:
@@ -158,7 +195,7 @@ def run_session(commands, *, cwd=None, env=None, run_command=None,
     with leased_environment(paths, env=environment) as child_env:
         for index, _ in configurations:
             execute(commands[index], child_env)
-        current = list(receipts) + _find_receipts([path for _, path in configurations])
+        current = list(receipts) + _find_receipts(directories) + _prefix_environments(directories, child_env)
         assert_parent_covers_environment(merge_environments(current), child_env)
         configured = {index for index, _ in configurations}
         for index, command in enumerate(commands[first:], first):
@@ -180,7 +217,8 @@ def main(argv=None):
     if not command:
         parser.error("a command is required after --")
     try:
-        receipts = _find_receipts([path.resolve() for path in args.build_dir])
+        directories = [path.resolve() for path in args.build_dir]
+        receipts = _find_receipts(directories) + _prefix_environments(directories, os.environ)
         if args.configure:
             if _configure_directory(command, Path.cwd()) is None:
                 raise ValueError("--configure requires a cmake -S ... -B ... command")

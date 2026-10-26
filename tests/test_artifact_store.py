@@ -158,6 +158,15 @@ class StoreTests(unittest.TestCase):
         with Environment((first,)).lease():
             verify_request(self.request(), first, home=self.home)
 
+    def test_pure_headers_ignore_ambient_compiler_selectors(self):
+        request = self.request(header_only=True, target={})
+        with mock.patch.dict(os.environ, {"CC": "first-compiler", "CXX": "first-cxx"}):
+            first = self.build(request)
+        with mock.patch.dict(os.environ, {"CC": "second-compiler", "CXX": "second-cxx"}):
+            second = self.build(request)
+        self.assertEqual(first, second)
+        self.assertEqual(self.counter.read_text().splitlines(), ["build"])
+
     def test_source_changed_after_selection_preserves_previous_artifact(self):
         first = self.build()
         recorded = json.loads(first.manifest.read_text())["inputs"]["source_content"]

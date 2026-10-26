@@ -4,13 +4,14 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from dataclasses import replace
 
 from forgedeps import Dependency, ProjectConfig
 from forgedeps import deps_build as deps
-from forgedeps.environments import build_environment, verify_environment, write_environment
+from forgedeps.environments import build_environment, read_environment, verify_environment, write_environment
 
 
 @unittest.skipUnless(shutil.which('cmake'), 'CMake unavailable')
@@ -99,6 +100,36 @@ add_test(NAME actual-shared-library COMMAND consumer)
         cyclic = replace(self.recipe, requires=('fixture',))
         with self.assertRaisesRegex(ValueError, 'Cyclic'):
             build_environment(self.lock, config=ProjectConfig(name='cycle', recipes=(cyclic,)), **self.kwargs)
+
+    def test_first_cmake_configure_and_cached_configure_share_identity(self):
+        parent = self.root / 'cmake-parent'
+        parent.mkdir()
+        config = parent / 'recipes.py'
+        config.write_text('from forgedeps import Dependency, ProjectConfig\n'
+                          'CONFIG = ProjectConfig(name="fixture", recipes=(Dependency('
+                          'name="fixture", version="", url="", sha256="", root="", '
+                          'kind="cmake", license="MIT", license_files=("LICENSE",), '
+                          'artifacts=("include/fixture.h", "lib/libfixture.a")),))\n')
+        module = Path(__file__).resolve().parents[1] / 'forgedeps/cmake/ForgeDeps.cmake'
+        (parent / 'CMakeLists.txt').write_text(f'''cmake_minimum_required(VERSION 3.21)
+project(Parent LANGUAGES C CXX)
+include("{module.as_posix()}")
+forgedeps_environment(FILE "{self.lock.as_posix()}" PROJECT_CONFIG "{config.as_posix()}"
+    HOME "{self.home.as_posix()}" SOURCE_OVERRIDES "fixture={self.source.as_posix()}")
+''')
+        command = ['cmake', '-S', str(parent), '-B', str(parent / 'build'),
+                   '-DCMAKE_BUILD_TYPE=Release', f'-DForgeDeps_PYTHON_EXECUTABLE={sys.executable}']
+        environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+        first = subprocess.run(command, env=environment, capture_output=True, text=True)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        receipt = parent / 'build/forgedeps-environment.json'
+        selected = read_environment(receipt)
+        before = receipt.read_bytes()
+        with selected.lease():
+            check = subprocess.run(command, env={**environment, 'FORGEDEPS_ENVIRONMENT': str(receipt)},
+                                   capture_output=True, text=True)
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+        self.assertEqual(before, receipt.read_bytes())
 
 
 if __name__ == '__main__':
