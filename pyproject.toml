@@ -3,8 +3,8 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aria-deps"
-version = "0.3.0"
+name = "forgedeps"
+version = "0.4.0"
 description = "Project-agnostic dependency pipeline: resolve, fetch, patch, build and install C/C++ dependencies"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -13,11 +13,11 @@ license = { file = "LICENSE" }
 test = []
 
 [project.scripts]
-aria-deps = "aria_deps.__main__:main"
+forgedeps = "forgedeps.__main__:main"
 
 [tool.setuptools.package-data]
-aria_deps = ["cmake/*.cmake"]
+forgedeps = ["cmake/*.cmake"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["aria_deps*"]
+include = ["forgedeps*"]

@@ -1,163 +1,180 @@
-# aria-deps
+# ForgeDeps
 
-Project-agnostic dependency pipeline for C/C++ projects: resolve locked
-dependencies, fetch sources, apply patches, build and transactionally install
-them into a prefix.
+ForgeDeps builds externally supplied C/C++ dependency recipes into a shared local
+workspace. Independent projects can reuse the same verified installation when
+the source, recipe, target toolchain, build options and dependencies agree.
 
-Extracted from [AriaRead](https://github.com/dqsjqian/AriaRead)'s `tools/build.py`.
+The core contains generic source adapters, a CMake runner, a recipe protocol,
+artifact verification and process locks. It contains **no third-party sources
+or library-specific build recipes**. A project can supply its own recipes or
+opt into a separate package such as [ForgeRecipes](https://github.com/dqsjqian/ForgeRecipes).
+There is no dependency from the core package to that catalog.
 
-## What it does
+This branch contains the 0.4 development candidate. The shared-store migration
+and cross-platform acceptance are in progress; no 0.4 release is published yet.
 
-- **Resolve**: `dependencies.json` lock records (GitHub/sqlite.org/bellard.org
-  providers, pluggable) → pinned versions, URLs, SHA256
-- **Fetch**: verified immutable archive/file caches for source-tree consumers,
-  transactional Git bootstrapping, or editable `deps/<name>/` workspaces for
-  prefix builds (user edits are preserved, tracked by content)
-- **Build**: per-dependency recipes (`cmake` / `openssl` / `generated` kinds),
-  patches applied to disposable snapshots (never touches user sources)
-- **Install**: transactional prefix install with manifest, component reuse by
-  content identity, rollback on failure
-- **Verify**: read-only check that the prefix matches current sources
-  (for CMake configure-time validation)
+## Install and choose a workspace
 
-## Usage
+Python 3.10+ and the recipe's build tools are required:
 
-Python 3.10 or newer is required. Install the released package into the same
-Python environment that runs your build entry point:
-
-```bash
-python -m pip install "git+https://github.com/dqsjqian/AriaDeps.git@v0.3.0"
+```sh
+python -m pip install "git+https://github.com/dqsjqian/ForgeDeps.git@work/forgedeps-shared-store"
+forgedeps init /path/to/ForgeDeps
+forgedeps home
 ```
 
-Projects can share the resolver and source cache while choosing their own
-build model: use the source with `add_subdirectory`, or install dependencies
-into a verified prefix with project-supplied recipes. Platform SDKs, Qt,
-Android Gradle packaging and toolchain selection remain the consumer's policy.
+When running from a ForgeDeps source checkout, its repository root is the default
+workspace. An installed wheel has no repository root: use `init` once or set
+`FORGEDEPS_HOME`. Resolution order is an explicit API/CLI path, `FORGEDEPS_HOME`,
+the registered workspace, then a verified tool source checkout. The consumer's
+working directory and Python's site-packages are never implicit workspaces.
 
-### Command line and CMake
-
-The `aria-deps` command and `python -m aria_deps` are equivalent. JSON results
-go to stdout; progress and native build output go to stderr.
-
-```bash
-aria-deps resolve --file dependencies.json --offline
-aria-deps read --file dependencies.json --only json
-aria-deps fetch-git --file dependencies.json --name library --destination deps/library
-aria-deps cmake-dir
+```text
+ForgeDeps/
+├── forgedeps/                      # generic implementation
+├── tests/
+├── examples/
+├── docs/
+├── downloads/<library>/            # verified downloads and Git mirrors
+├── sources/<library>/              # current editable source workspace
+├── build/<library>/<target>/       # one current installed artifact
+│   ├── include/
+│   ├── lib/
+│   ├── bin/
+│   ├── share/licenses/
+│   ├── manifest.json
+│   └── build.log
+├── state/
+│   ├── sources/
+│   ├── locks/
+│   └── transactions/
+└── tmp/                            # disposable toolchain probes
 ```
 
-Resolution reuses the locked selection unless explicitly updated. `--output`
-writes an effective lock outside the input, useful for CMake configuration.
-`--version library=1.2.3-vendor.1` selects an explicit published downstream tag;
-explicit prereleases are also supported. Automatic `latest` selection excludes
-prereleases and downstream suffixes. Every GitHub selection pins its full Git
-revision, and archives/files pin their SHA256.
+Examples of target labels are `macos-arm64-appleclang-release` and
+`windows-x64-msvc-release`. The manifest records precise compiler versions and
+ABI details; directory names do not contain build fingerprints. Each library
+and target label has **one current installation**, not a growing version tree.
+A verified header-only recipe can use the `headers` slot.
 
-`fetch-archive` and `fetch-file` require a URL, SHA256 and cache directory. They
-validate downloads and existing extracted contents on every call. Local edits
-are rejected and preserved. Offline calls use only already populated caches.
-The immutable cache is separate from editable prefix-build workspaces. A new
-cache requires one online population; old project-specific caches are not
-silently trusted or deleted.
+## Inject a project policy
 
-`fetch-git` verifies the locked commit and refuses dirty, linked-worktree and
-symlink destinations. Updates stage a new checkout before replacing the old
-one; failures restore the old lock and checkout. Successful replacements retain
-the previous checkout as a sibling backup. `--source` accepts an explicit local
-repository or mirror; with `--offline`, it must be local and contain the commit.
+A configuration module exports `CONFIG` or `make_config()`:
 
-The installed `cmake/AriaDeps.cmake` exposes `aria_deps_resolve`,
-`aria_deps_fetch_archive` and `aria_deps_fetch_file`. It delegates all resolution
-and fetching to the same Python implementation. The independent
-[hello-json example](examples/hello-json) shows a complete C++ consumer that
-does not depend on any Aria library:
+```python
+from forgedeps import Dependency, ProjectConfig
 
-```bash
-cmake -S examples/hello-json -B build/hello-json
-cmake --build build/hello-json --config Release
-ctest --test-dir build/hello-json -C Release --output-on-failure
-cmake -S examples/hello-json -B build/hello-json -DEXAMPLE_OFFLINE=ON
+CONFIG = ProjectConfig(name="my-project", recipes=(
+    Dependency(name="example", version="", url="", sha256="", root="",
+               kind="cmake", license="MIT", license_files=("LICENSE",),
+               artifacts=("include/example.h", "lib/libexample.a")),
+))
 ```
 
-### Prefix builds
+The project's schema-2 `dependencies.json` supplies the resolved version,
+immutable Git revision and archive SHA256 for `example`. The project name and
+configuration-module location are not artifact identity inputs. Identical
+recipes in two projects can therefore reuse one installation.
+
+```sh
+forgedeps resolve --file dependencies.json --project-config recipes.py
+forgedeps environment --file dependencies.json --project-config recipes.py \
+  --output build/dependencies.json --build-config Release
+forgedeps run --environment build/dependencies.json -- python scripts/build.py
+```
+
+`environment` returns a list of prefixes and generation references. Consumers
+use those prefixes with `find_package`, `find_library` or their build system's
+normal imported-library support. They do not recompile the dependency or need
+to copy its installed files into a second project-local dependency build.
+
+Pass the same compiler, toolchain and `--cmake-option=-DNAME=VALUE` arguments
+when checking a current environment:
+
+```sh
+forgedeps environment --check --file dependencies.json --project-config recipes.py \
+  --output build/dependencies.json --build-config Release
+```
+
+This checks the lock, current source contents, recipe implementation, actual
+toolchain and artifact files. It never fetches or replaces dependencies.
+`verify-environment --environment FILE` checks the recorded artifact graph;
+it does not reevaluate a project's current source selection.
+
+The installed CMake module (`forgedeps cmake-dir`) exposes
+`forgedeps_environment` and `forgedeps_use_environment`. The latter prepends
+verified prefixes to `CMAKE_PREFIX_PATH` and tracks every manifest as a
+configure dependency. Build drivers must hold an environment lease across
+configure, build, tests and packaging. In Python:
 
 ```python
 from pathlib import Path
-from aria_deps import Dependency, ProjectConfig, install
-from aria_deps import providers
+from forgedeps import build_environment
 
-RECIPES = (
-    Dependency(name="example", version="", url="", sha256="",
-               license="MIT", license_files=("LICENSE",), root="", kind="cmake"),
-)
-
-def configure(recipes, profile, tls_backend):
-    # project policy: filter/rewrite recipes per profile
-    return recipes
-
-config = ProjectConfig(
-    name="myproject",
-    recipes=RECIPES,
-    configure=configure,
-    providers={"sqlite": providers.resolve_sqlite},
-    patches_dir=Path("recipes/patches"),
-    patch_versions={"foo": {"1.0"}},
-)
-
-install(Path("dependencies.json"), Path("build/deps"), Path("build/deps/prefix"),
-        Path("deps"), config=config, profile="runtime")
+selected = build_environment(Path("dependencies.json"), config=CONFIG)
+with selected.lease():
+    # Configure, build, test and package using selected.prefixes.
+    pass
 ```
 
-The example expects a schema-2 `dependencies.json` declaration with a matching
-`example` entry. Normal installs reuse its resolved release, commit and SHA256;
-they do not silently upgrade it.
+## Reuse and replacement rules
 
-`install(..., build_config="Debug", cmake_options=("-DFEATURE=ON",))` passes the
-selected configuration through configure, build and install. Configuration and
-extra CMake options are part of component identity, so a Release prefix cannot
-be silently reused for Debug. Project hook code and its imported helper module
-contents also invalidate affected components when changed.
+The tool probes the real CMake compiler and compiles target objects without
+executing them. It records compiler binary/version, target architecture and
+platform, SDK/toolchain inputs, effective flags and runtime ABI. Device and
+simulator builds are distinct. Recipe code, declared helper/patch/template
+files, actual source contents and transitive artifact identities also enter
+the receipt. Changing a compiler or option cannot silently reuse an old binary.
 
-For configure-time checks, pass the consumer's expected settings explicitly:
-`verify(..., build_config="Release", cmake_options=())`. A mismatch fails
-without changing the prefix. Omitting either option keeps its recorded value
-for compatibility with existing callers. Hooks must be source-readable Python
-functions defined in a file; built-ins and dynamically created functions are
-rejected with a diagnostic because their implementation cannot be fingerprinted.
+Readers share a process-owned lease. A writer locks the dependency graph before
+replacing a slot, so it waits for active consumers. Installation uses the final
+canonical prefix because package metadata can embed it. A failed build restores
+the previous verified installation; a journal allows recovery after an abruptly
+terminated writer. Changed installed files receive fresh timestamps so ordinary
+incremental builds also rebuild after an upstream header with an old mtime changes.
 
-The same operations are available through the CLI. The configuration module
-must export `CONFIG` or `make_config()` returning a `ProjectConfig`:
+A source selection change replaces only an unchanged managed source workspace.
+Local edits and unknown directories are preserved. An incompatible lock change
+fails explicitly instead of relabelling the old source as the new version.
+Use `--source NAME=PATH` to intentionally inject an editable checkout; its
+contents are still hashed and snapshots are built outside the user's tree.
 
-```bash
-aria-deps install --project-config recipes.py --file dependencies.json --work build/deps --build-config Debug
-aria-deps verify --project-config recipes.py --file dependencies.json --work build/deps --build-config Debug
+Two projects requiring different versions or options in the same readable slot
+cannot use that slot simultaneously. Each gets its exact requested build after
+current readers finish. There is no version-constraint solver or remote binary
+registry. Installations are tied to their canonical location; this is not a
+promise of arbitrary binary relocation or a completely hermetic SDK.
+
+A distributed application must package its needed runtime libraries and notices.
+A running installed application must not depend on a mutable shared build slot
+remaining at yesterday's generation after its build lease ends.
+
+## Custom builders and compatibility
+
+`BuildRequest` / `BuildContext` provide the lower-level injection protocol for
+non-CMake builders. See [the recipe protocol](docs/RECIPE-PROTOCOL.md).
+Library-specific providers, Configure mappings, source patches and compatibility
+aliases belong to external recipe packages. The core's default resolver supports
+GitHub; other providers are injected through `ProjectConfig.providers`.
+
+The older `install` / `verify` APIs and CLI commands remain available for an
+explicit project-local combined prefix. They do not provide cross-project binary
+reuse. Custom kinds now require `ProjectConfig.builders`; the previous built-in
+OpenSSL builder and SQLite/QuickJS providers moved to ForgeRecipes. Migrate to
+`environment` for the shared store. Source-only `fetch-archive`, `fetch-file`
+and `fetch-git` remain available as generic primitives.
+
+Versions only change through explicit resolution/update. Explicit downstream
+and prerelease tags are supported; automatic `latest` chooses stable upstream
+releases. See [dependency maintenance](docs/DEPENDENCY-MAINTENANCE.md) for the
+focused-fork policy and release verification.
+
+## Verification
+
+```sh
+python -m unittest discover -s tests -t tests -p 'test_*.py'
 ```
 
-Pass the same compiler, toolchain, configuration and `--cmake-option=-DNAME=VALUE`
-arguments to both operations. A mismatch fails without modifying the prefix.
-
-## Layout
-
-All directories are caller-provided; nothing is hardcoded to a repository root.
-The dependency work directory follows the build directory, so each
-compiler/build-dir gets isolated snapshots, caches and installed libraries.
-
-Recipes with `requires` must be listed after their prerequisites. There is no
-version-constraint solver or remote binary registry. Prefixes are tied to their
-recorded location and build environment. This is a reproducible source-selection
-and build-validation mechanism, not a hermetic SDK or a guarantee that every
-compiler emits byte-identical binaries. Consumers must explicitly identify
-external SDKs and libraries that affect their recipes.
-
-See [dependency maintenance](docs/DEPENDENCY-MAINTENANCE.md) for downstream fork
-policy and release requirements.
-
-## Tests
-
-```bash
-python -m unittest discover -s tests -t tests -p "test_*.py"
-```
-
-CI runs the offline suite on Linux, macOS and Windows, with Python 3.10 and
-3.13, and checks installation of the distribution. The Windows compiler test
-is skipped on non-Windows hosts; install/upgrade/rollback tests run everywhere.
+CI runs on Linux, macOS and Windows with Python 3.10 and 3.13. Tests compile and
+run independent consumers, exercise source/options changes and preserved mtimes,
+and use separate processes for concurrent builds, readers and killed writers.

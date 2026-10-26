@@ -11,7 +11,7 @@ import tarfile
 import tempfile
 import unittest
 
-from aria_deps.deps_build import request_hash
+from forgedeps.deps_build import request_hash
 
 
 @unittest.skipUnless(shutil.which("cmake"), "CMake unavailable")
@@ -26,12 +26,12 @@ class CMakeBridgeTests(unittest.TestCase):
     def run_cmake(self, body, *, success=True):
         script = self.root / "consumer.cmake"
         script.write_text('cmake_minimum_required(VERSION 3.21)\n'
-                          'execute_process(COMMAND "${AriaDeps_PYTHON_EXECUTABLE}" '
-                          '-m aria_deps cmake-dir OUTPUT_VARIABLE modules '
+                          'execute_process(COMMAND "${ForgeDeps_PYTHON_EXECUTABLE}" '
+                          '-m forgedeps cmake-dir OUTPUT_VARIABLE modules '
                           'OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)\n'
-                          'include("${modules}/AriaDeps.cmake")\n' + body,
+                          'include("${modules}/ForgeDeps.cmake")\n' + body,
                           encoding="utf-8")
-        result = subprocess.run(["cmake", f"-DAriaDeps_PYTHON_EXECUTABLE={Path(sys.executable).as_posix()}",
+        result = subprocess.run(["cmake", f"-DForgeDeps_PYTHON_EXECUTABLE={Path(sys.executable).as_posix()}",
                                  "-P", str(script)], cwd=self.root, env=self.env,
                                 capture_output=True, encoding="utf-8", errors="replace")
         if success:
@@ -49,7 +49,7 @@ class CMakeBridgeTests(unittest.TestCase):
         lock.write_text(json.dumps({"schema": 2, "dependencies": {
             "fixture": {**spec, "resolved": record}}}), encoding="utf-8")
         original = lock.read_bytes()
-        body = '''aria_deps_resolve(NAME FIXTURE FILE "${CMAKE_CURRENT_LIST_DIR}/dependencies.json"
+        body = '''forgedeps_resolve(NAME FIXTURE FILE "${CMAKE_CURRENT_LIST_DIR}/dependencies.json"
     REQUEST_VERSION 1.0 STATE_DIR "${CMAKE_CURRENT_LIST_DIR}/effective locks" OFFLINE
     VERSION version URL url SHA256 hash REVISION revision TAG tag)
 file(WRITE "${CMAKE_CURRENT_LIST_DIR}/results.txt" "${version}\n${url}\n${hash}\n${revision}\n${tag}\n")
@@ -73,9 +73,9 @@ file(WRITE "${CMAKE_CURRENT_LIST_DIR}/results.txt" "${version}\n${url}\n${hash}\
             member.size = 3
             archive.addfile(member, io.BytesIO(b"42\n"))
         archive_hash = hashlib.sha256(archive_path.read_bytes()).hexdigest()
-        body = f'''aria_deps_fetch_file(NAME fixture URL "{header.as_uri()}" SHA256 "{header_hash}"
+        body = f'''forgedeps_fetch_file(NAME fixture URL "{header.as_uri()}" SHA256 "{header_hash}"
     CACHE "${{CMAKE_CURRENT_LIST_DIR}}/cache space" AS "fixture/header.h" FILE header BASE base ${{mode}})
-aria_deps_fetch_archive(NAME fixture VERSION 1.0 URL "{archive_path.as_uri()}" SHA256 "{archive_hash}"
+forgedeps_fetch_archive(NAME fixture VERSION 1.0 URL "{archive_path.as_uri()}" SHA256 "{archive_hash}"
     CACHE "${{CMAKE_CURRENT_LIST_DIR}}/cache space" SOURCE_DIR source ARCHIVE archive ${{mode}})
 file(WRITE "${{CMAKE_CURRENT_LIST_DIR}}/results.txt" "${{header}}\n${{base}}\n${{source}}\n${{archive}}\n")
 '''

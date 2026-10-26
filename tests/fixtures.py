@@ -1,10 +1,10 @@
-"""Minimal project fixtures for aria-deps mechanism tests.
+"""Minimal project fixtures for forgedeps mechanism tests.
 
 These recipes exercise the pipeline machinery (resolve/install/verify)
 without any project-specific policy. They are intentionally tiny.
 """
 
-from aria_deps import Dependency, ProjectConfig
+from forgedeps import Dependency, ProjectConfig
 
 
 def _hook_copied(prefix, source, dep):

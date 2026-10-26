@@ -76,6 +76,13 @@ def _tree_digest(root: Path) -> str:
 
 
 def _download(cache: Path, url: str, digest: str, offline: bool, *, archive: bool) -> Path:
+    return fetch_download(url, digest, cache / "downloads", offline=offline, archive=archive)
+
+
+def fetch_download(url: str, sha256: str, directory: Path, *, offline: bool = False,
+                   archive: bool = True) -> Path:
+    """Fetch a verified file into an explicit download directory, without extracting."""
+    digest = _digest(sha256)
     parsed = urlsplit(url)
     local = None
     if parsed.scheme == "file":
@@ -86,7 +93,7 @@ def _download(cache: Path, url: str, digest: str, offline: bool, *, archive: boo
             raise ValueError("Local source file URLs must name an absolute non-UNC path")
     else:
         deps.https_url(url)
-    downloads = _directory(cache / "downloads")
+    downloads = _directory(Path(directory).absolute())
     # The spelling of a URL's basename must not become a local filename.
     filename = "source.zip" if archive and urlsplit(url).path.lower().endswith(".zip") else "source"
     dependency = SimpleNamespace(url=url, sha256=digest, archive_name=filename)
@@ -107,7 +114,7 @@ def _download(cache: Path, url: str, digest: str, offline: bool, *, archive: boo
                     if deps.sha256(candidate) != digest:
                         raise ValueError(f"Local source SHA256 verification failed: {local}")
                     candidate.replace(content)
-        return deps.download(downloads, dependency, offline, user_agent="aria-deps")
+        return deps.download(downloads, dependency, offline, user_agent="forgedeps")
 
 
 def _verify(entry: Path, digest: str) -> Path:
@@ -269,7 +276,7 @@ def bootstrap_git(file: Path, name: str, destination: Path, *, version: str | No
             selection = deps.resolve(
                 file, effective, only=[name], update=update,
                 versions={name: version} if version is not None else {},
-                context=deps.Context(resolution_cache, offline=offline, user_agent="aria-deps"))
+                context=deps.Context(resolution_cache, offline=offline, user_agent="forgedeps"))
             record = selection["dependencies"][name]
             if record["source"].get("artifact") != "git":
                 raise ValueError("Git bootstrap requires a Git dependency declaration")

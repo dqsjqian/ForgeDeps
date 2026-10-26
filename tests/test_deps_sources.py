@@ -11,8 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from aria_deps import deps_sources as sources
-from aria_deps import init_project
+from forgedeps import deps_sources as sources
+from forgedeps import init_project
 import fixtures
 
 init_project(fixtures.CONFIG)

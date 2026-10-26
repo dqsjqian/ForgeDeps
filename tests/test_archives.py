@@ -6,7 +6,7 @@ import tempfile
 import unittest
 import zipfile
 
-from aria_deps.deps_build import extract
+from forgedeps.deps_build import extract
 
 
 class ArchiveTests(unittest.TestCase):

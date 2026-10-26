@@ -1,8 +1,22 @@
 # Changelog
 
+## [0.4.0] - 2026-10-26
+
+- Add a shared artifact workspace with one current installation per library and
+  readable target label, internal manifests, transactional replacement and recovery.
+- Probe the actual compiler, target ABI, SDK, flags and toolchain inputs; share
+  verified artifacts across independent projects without consumer-path identity.
+- Add reader leases covering entire consumer sessions, exclusive writers,
+  source/recipe/transitive validation and incremental-rebuild timestamp handling.
+- Add externally injected BuildRequest/BuildContext recipes, environment build/check
+  APIs, workspace initialization and shared CMake environment consumption.
+- Move library-specific OpenSSL, SQLite, QuickJS and zlib mechanisms out of the
+  core into the separate ForgeRecipes package. Legacy custom kinds require an
+  explicit builder registration.
+
 ## 0.3.0
 
-- Add the `aria-deps` CLI for resolution, read-only validation, source fetching,
+- Add the `forgedeps` CLI for resolution, read-only validation, source fetching,
   Git bootstrapping, prefix installation and verification.
 - Add an installed CMake bridge backed by the same Python implementation and
   an independent C++ JSON consumer example.
@@ -21,7 +35,7 @@
 
 ## 0.2.0
 
-- New `aria_deps.build_kit` subpackage: shared build pipeline mechanics for
+- New `forgedeps.build_kit` subpackage: shared build pipeline mechanics for
   C++ projects (deps -> build -> test -> bench -> package).
 - `Pipeline` class with per-project configuration (dependencies, CMake flags,
   Qt requirements, post-build hooks, custom build directories, validation).

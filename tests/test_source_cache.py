@@ -14,8 +14,8 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 import zipfile
 
-from aria_deps import deps_build as deps
-from aria_deps import source_cache as cache
+from forgedeps import deps_build as deps
+from forgedeps import source_cache as cache
 
 
 class Response(io.BytesIO):

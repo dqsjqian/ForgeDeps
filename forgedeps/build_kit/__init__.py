@@ -11,7 +11,7 @@ Public API:
     DllDeploy: Post-build step for Windows DLL deployment.
 
 Example:
-    from aria_deps.build_kit import Pipeline
+    from forgedeps.build_kit import Pipeline
 
     Pipeline(
         name="my-project",

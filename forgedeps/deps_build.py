@@ -88,6 +88,10 @@ class ProjectConfig:
     patches_dir: object = None
     #: Patch version whitelist: {dep_name: {version: ...}}.
     patch_versions: dict = field(default_factory=dict)
+    #: External build implementations: kind -> fn(BuildContext).
+    builders: dict = field(default_factory=dict)
+    #: Optional fn(locked_dependency, resolved_record) -> Dependency.
+    resolve_recipe: object = None
     #: Prefix for environment variable overrides, e.g. "ARIAREAD".
     #: Defaults to name.upper().
     env_prefix: object = None
@@ -274,7 +278,7 @@ class Context:
     def request_user_agent(self) -> str:
         if self.user_agent is not None:
             return self.user_agent
-        return _ACTIVE.user_agent if _ACTIVE is not None else "aria-deps"
+        return _ACTIVE.user_agent if _ACTIVE is not None else "forgedeps"
 
     def get_bytes(self, url: str) -> bytes:
         if self.offline:
@@ -792,7 +796,7 @@ class Dependency:
     license_files: tuple[str, ...]
     #: Top-level directory inside the archive; empty locates the single root
     root: str
-    #: cmake | openssl | generated | git
+    #: cmake | generated | git, or a key in ProjectConfig.builders
     kind: str
     #: Extra arguments passed to CMake
     options: tuple[str, ...] = ()
@@ -817,16 +821,17 @@ class Dependency:
     #: Optional post-build hook: fn(prefix, source, dep) -> None, runs after
     #: the build but before artifact verification (e.g. zlib Windows rename).
     post_build: object = None
+    #: External builder/helper/template inputs; content, not location, is hashed.
+    builder_inputs: tuple[Path, ...] = ()
+    #: Pure header installations can share one compiler-independent slot.
+    header_only: bool = False
+    #: Source transport, independent of the builder kind; set by lock resolution.
+    source_kind: str = ""
 
     @property
     def archive_name(self) -> str:
         return self.url.rsplit("/", 1)[-1]
 
-
-# Generated CMakeLists for upstreams without a CMake build (gumbo, sqlite,
-# quickjs). They live here — not in the repository sources — because they
-# describe how an upstream is compiled into an installed library, which is a
-# property of this pipeline, not of AriaRead's own build.
 
 def locked_recipes(lock, recipes, config=None):
     entries = lock.get('dependencies', {})
@@ -843,15 +848,20 @@ def locked_recipes(lock, recipes, config=None):
                              f'supported: {sorted(patch_versions.get(recipe.name, ()))}')
         revision = entry.get('revision', '')
         digest = entry.get('sha256', '')
-        if recipe.kind == 'git':
+        source_kind = 'git' if entry.get('source', {}).get('artifact') == 'git' else 'archive'
+        if source_kind == 'git':
             if len(revision) != 40 or any(c not in '0123456789abcdef' for c in revision):
                 raise ValueError(f'{recipe.name} requires a full locked Git revision')
         elif len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
             raise ValueError(f'{recipe.name} requires a locked SHA256')
-        result.append(replace(recipe, version=version, url=entry['url'], sha256=digest,
-                              revision=revision,
-                              cmake_lists=recipe.cmake_lists.replace('@QUICKJS_VERSION@', version),
-                              hash_note=entry.get('checksum_source', recipe.hash_note)))
+        locked = replace(recipe, version=version, url=entry['url'], sha256=digest,
+                         revision=revision, source_kind=source_kind,
+                         hash_note=entry.get('checksum_source', recipe.hash_note))
+        if config is not None and config.resolve_recipe is not None:
+            locked = config.resolve_recipe(locked, entry)
+            if not isinstance(locked, Dependency) or locked.name != recipe.name:
+                raise ValueError('resolve_recipe must return a Dependency with the same name')
+        result.append(locked)
     return result
 
 
@@ -869,10 +879,14 @@ def recipe_digest(dependencies):
                  artifact_present, build_environment, cmake_arguments, install_component,
                  dependency_selection, compiler, build_context,
                  sources.files, sources.inventory, sources.snapshot)
-    functions += (build_openssl, build_openssl_mingw, msys2_tool) if any(dep.kind == 'openssl' for dep in dependencies) else ()
-    functions += (build_cmake,) if any(dep.kind != 'openssl' for dep in dependencies) else ()
+    functions += (build_cmake,)
+    functions += tuple(_project().builders[kind] for kind in sorted({dep.kind for dep in dependencies})
+                       if kind in _project().builders)
+    if _project().resolve_recipe is not None:
+        functions += (_project().resolve_recipe,)
     def recipe_record(dep):
         record = asdict(dep)
+        record['builder_inputs'] = sorted(sha256(Path(path)) for path in dep.builder_inputs)
         # Project hooks and their helpers affect the installed result. Hash
         # their module contents as well as the function, not just its name.
         for key in ('post_install', 'post_build'):
@@ -1037,7 +1051,7 @@ def build_environment(prefix, c=None, cxx=None, toolchain=None):
                     for key in ('c', 'cxx')}
         if len(families) != 1:
             raise ValueError('C and C++ compilers must use the same Windows toolchain (MSVC or MinGW)')
-    # OpenSSL Configure and CMake must consume the same selected compiler.
+    # Every registered builder must consume the same selected compiler.
     for variable, key in [('CC', 'c'), ('CXX', 'cxx')]:
         command = [context[key]['path'], *context[key]['arguments']]
         os.environ[variable] = subprocess.list2cmdline(command) if os.name == 'nt' else shlex.join(command)
@@ -1064,7 +1078,7 @@ def cmake_arguments(prefix, context, config='Release'):
 def prepare_workspace(work, source_dir, dep, offline, explicit=False):
     """deps/<name>: a Git clone the user can pull, or the unpacked release archive."""
     def populate(destination):
-        if dep.kind == 'git':
+        if dep.source_kind == 'git' or (not dep.source_kind and dep.kind == 'git'):
             fetch_git(work, destination, dep, offline)
         else:
             archive = download(work / 'cache', dep, offline)
@@ -1092,7 +1106,7 @@ def apply_patch(source: Path, patch_file: Path) -> None:
         index += 2
 
         def strip_prefix(name: str) -> str:
-            # a/quickjs.c -> quickjs.c; a trailing timestamp is removed as well.
+            # Strip a/ or b/ and an optional trailing timestamp.
             name = name.split("\t", 1)[0]
             return name[2:] if name.startswith(("a/", "b/")) else name
 
@@ -1188,26 +1202,9 @@ def artifact_present(prefix: Path, artifact: str) -> bool:
     if not artifact.endswith('.a') or not candidate.parent.is_dir():
         return False
     stem = candidate.stem.removeprefix('lib')
-    stems = {'z': ('z', 'zlibstatic')}.get(stem, (stem, 'lib' + stem))
+    stems = (stem, 'lib' + stem)
     names = {name + suffix for name in stems for suffix in ('.a', '.lib')}
     return any(entry.is_file() and entry.name.lower() in names for entry in candidate.parent.iterdir())
-
-
-def normalize_zlib_static(prefix: Path) -> None:
-    """Keep zlib's exports intact and supply names understood by FindZLIB.
-
-    zlib 1.3.2 names Windows static libraries zs.lib/libzs.a. Older CMake
-    FindZLIB modules do not search these names, so retain the original export
-    location and add a byte-identical static-library compatibility name.
-    """
-    for original, compatible in [('zs.lib', 'zlibstatic.lib'), ('libzs.a', 'libz.a')]:
-        source, target = prefix / 'lib' / original, prefix / 'lib' / compatible
-        if source.is_file():
-            if target.exists() or target.is_symlink():
-                if target.is_symlink() or not target.is_file() or sha256(source) != sha256(target):
-                    raise ValueError(f'Conflicting zlib static library preserved: {target}')
-            else:
-                shutil.copy2(source, target)
 
 
 def windows_toolchain() -> str:
@@ -1238,136 +1235,6 @@ def build_cmake(source: Path, build: Path, prefix: Path, jobs: int,
     # Xcode and Ninja Multi-Config, including MSVC builds without a VS generator.
     run(['cmake', '--build', str(build), '--parallel', str(jobs), '--config', config])
     run(['cmake', '--install', str(build), '--config', config])
-
-
-def msys2_tool(name: str, compiler: str | None = None) -> str:
-    """Locate a tool from the MSYS2 installation that owns `compiler`.
-
-    OpenSSL's mingw64 recipe is a Unix recipe: Perl must emit forward-slash
-    paths and the makefiles call sh utilities. Running it from native Windows
-    Python with a MSWin32 perl fails ("This perl implementation doesn't
-    produce Unix like paths"), while the MSYS2 perl cannot be spawned across
-    the Windows/MSYS boundary. Aria's BuildOpenSSL.cmake solves this by
-    driving the whole recipe through MSYS2 bash; resolve the same toolchain
-    here so both projects share one approach.
-    """
-    roots: list[Path] = []
-    if compiler:
-        roots.append(Path(compiler).resolve().parent.parent.parent / "usr" / "bin")
-    for variable in ('MSYS2_ROOT',):
-        if os.environ.get(variable):
-            roots.append(Path(os.environ[variable]) / "usr" / "bin")
-    roots += [Path(r) / "usr" / "bin" for r in ("C:/msys64", "D:/msys64", "D:/worksoft/msys64")]
-    for root in roots:
-        candidate = root / f"{name}.exe"
-        if candidate.is_file():
-            return str(candidate)
-    raise ValueError(
-        f"OpenSSL's MinGW build needs MSYS2's {name} ({', '.join(str(r) for r in roots)}); "
-        "install MSYS2 or set MSYS2_ROOT")
-
-
-def _openssl_c_compiler(c_compiler):
-    """Select the C compiler for the OpenSSL build.
-
-    OpenSSL must not be built with a conda clang wrapper: the wrapper
-    prepends -L<toolchain>/lib to every link, so the legacy provider
-    links the toolchain's libcrypto.so.3 (which hides the ossl_prov_*
-    internals) instead of the just-built static library, and the link
-    fails under -z defs. gcc builds OpenSSL fine, so force gcc whenever
-    the selected C compiler is clang. MSVC and MinGW keep their own
-    compiler handling and are unaffected.
-    """
-    if not c_compiler or sys.platform == 'win32':
-        return None
-    stem = Path(c_compiler).stem.lower()
-    if stem in ('clang', 'clang++') or stem.startswith('clang-'):
-        gcc = shutil.which('gcc')
-        if gcc is None:
-            raise ValueError('OpenSSL cannot be built with clang here and no gcc is on PATH')
-        return gcc
-    return None
-
-
-def build_openssl(source: Path, prefix: Path, jobs: int, c_compiler=None) -> None:
-    windows = sys.platform == "win32"
-    toolchain = windows_toolchain() if windows else ""
-    if toolchain == "mingw":
-        build_openssl_mingw(source, prefix, jobs)
-        return
-    if shutil.which("perl") is None:
-        raise ValueError("OpenSSL's Configure requires perl (Strawberry Perl on Windows)")
-    make = "nmake" if toolchain == "msvc" else "make"
-    if shutil.which(make) is None:
-        raise ValueError(f"Building OpenSSL from source requires {make}")
-    if toolchain == "msvc":
-        target = ["VC-WIN64A"]
-    else:
-        target = []
-    compiler_options = []
-    openssl_cc = _openssl_c_compiler(c_compiler)
-    if openssl_cc is not None:
-        compiler_options.append('CC=' + openssl_cc)
-    if toolchain == 'msvc':
-        # OpenSSL's Windows makefile template quotes CC itself. Passing the
-        # shell-quoted CC used by CMake would produce ""C:\Program Files\..."".
-        selected = compiler(os.environ.get('CC') or 'cl')
-        compiler_options.append('CC=' + selected['path'])
-        if selected['arguments']:
-            flags = subprocess.list2cmdline(selected['arguments'])
-            compiler_options.append('CFLAGS=' + (flags + ' ' + os.environ.get('CFLAGS', '')).strip())
-    # no-asm avoids a NASM dependency on Windows; the static libraries only
-    # serve libcurl, so the slowdown is acceptable.
-    run(["perl", str(source / "Configure"), *target, f"--prefix={prefix}",
-         f"--openssldir={prefix}/ssl", "--libdir=lib", "no-shared", "no-tests",
-         # no-winstore: the Windows certificate-store provider pulls
-         # crypt32 into every static consumer, and OpenSSL's exported
-         # CMake interface lists crypt32 *before* libcrypto.a, which GNU
-         # ld (left-to-right) cannot use. Nothing in AriaRead reads the
-         # system store — curl ships its own CA bundle.
-         "no-winstore",
-         "no-docs", "no-apps", "no-asm", *compiler_options], cwd=source)
-    if toolchain == "msvc":
-        run([make], cwd=source)
-        run([make, "install_sw"], cwd=source)
-    else:
-        run([make, "-j", str(jobs)], cwd=source)
-        run([make, "install_sw"], cwd=source)
-
-
-def build_openssl_mingw(source: Path, prefix: Path, jobs: int) -> None:
-    """Build OpenSSL's mingw64 target entirely inside MSYS2 bash.
-
-    The compiler output is a Windows static library either way, but Perl,
-    make and the generated makefiles must agree on the filesystem, so the
-    recipe cannot be driven from native Windows Python.
-    """
-    compiler = os.environ.get('CC') or shutil.which('gcc') or shutil.which('g++')
-    if not compiler:
-        raise ValueError("OpenSSL's MinGW build requires gcc")
-    bash = msys2_tool('bash', compiler)
-    perl = msys2_tool('perl', compiler)
-    make = msys2_tool('make', compiler)
-    recipe = source / f"{_project().name}-openssl-mingw.sh"
-    recipe.write_text(
-        "#!/usr/bin/env bash\n"
-        "# Generated by aria-deps. OpenSSL's mingw64 recipe is a Unix\n"
-        "# recipe, so shell, make and Perl must share one filesystem view.\n"
-        "set -euo pipefail\n"
-        f'export PATH="$(cygpath -u "{Path(compiler).resolve().parent}"):'
-        f'$(dirname "$(cygpath -u "{perl}")"):$PATH"\n'
-        f'source_dir="$(cygpath -u "{source}")"\n'
-        f'prefix_dir="$(cygpath -u "{prefix}")"\n'
-        'mkdir -p "$prefix_dir"\n'
-        'cd "$source_dir"\n'
-        f'exec "$(cygpath -u "{perl}")" "$source_dir/Configure" mingw64 \\\n'
-        f'    "--prefix=$prefix_dir" "--openssldir=$prefix_dir/ssl" --libdir=lib \\\n'
-        '    no-shared no-tests no-winstore no-docs no-apps no-asm\n',
-        encoding='utf-8', newline='\n')
-    run([bash, str(recipe)], cwd=source)
-    run([bash, '-lc', f'cd "$(cygpath -u "{source}")" && '
-                      f'PATH="$(cygpath -u "{Path(compiler).resolve().parent}"):$PATH" '
-                      f'"{make}" -j{jobs} && "{make}" install_sw'], cwd=source)
 
 
 def sha256(path: Path) -> str:
@@ -1544,11 +1411,6 @@ def output_path(value: Path) -> Path:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-# A patch is approved for a specific upstream version, never blindly carried forward.
-PATCH_VERSIONS = {'gumbo': {'0.10.1'}, 'quickjs': {'2026-06-04'},
-                  'sqlite_modern_cpp': {'3.2'}, 'doctest': {'2.5.3'}}
-
-
 def install_component(dep, available, run_root, prefix, jobs, common, expected_source=None, config='Release',
                       c_compiler=None):
     # One flat directory per dependency; a rebuild discards the previous one.
@@ -1558,10 +1420,20 @@ def install_component(dep, available, run_root, prefix, jobs, common, expected_s
     source = holder / 'source'
     actual_source = sources.snapshot(available, source, expected_source)
     prepare_source(source, dep)
-    if dep.kind == 'openssl':
-        build_openssl(source, prefix, jobs, c_compiler)
-    else:
+    builder = _project().builders.get(dep.kind)
+    if builder is not None:
+        from .artifacts import BuildContext
+        build = holder / 'build'
+        build.mkdir()
+        target = build_context(prefix, c_compiler)
+        context = BuildContext(source, build, prefix, (prefix,),
+                               {'cmake_options': tuple(common) + dep.options}, dict(os.environ),
+                               target, {}, jobs, config)
+        builder(context)
+    elif dep.kind in ('cmake', 'generated', 'git'):
         build_cmake(source, holder / 'build', prefix, jobs, dep, common, config)
+    else:
+        raise ValueError(f'No external builder registered for recipe kind: {dep.kind}')
     licenses = copy_licenses(prefix, source, dep)
     if dep.post_build is not None:
         dep.post_build(prefix, source, dep)

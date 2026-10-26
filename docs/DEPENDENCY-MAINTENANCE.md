@@ -22,7 +22,7 @@ lock. Publish verified source artifacts before updating consumers; update the
 consumer lock and recipe together. Preserve existing local edits and reject
 modified caches rather than overwriting them.
 
-For AriaDeps releases, run the offline transaction, source-cache and CLI suites
+For ForgeDeps releases, run the offline transaction, source-cache and CLI suites
 on Linux, macOS and Windows, verify the installed wheel includes the CLI and
 CMake module, and build an independent consumer. Push reviewed source, require
 green CI, then create the immutable release tag. Existing tags are never moved.

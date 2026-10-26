@@ -113,23 +113,6 @@ def find_msys2_bin() -> Path | None:
     return None
 
 
-def find_openssl() -> tuple[Path | None, str]:
-    """Locate the openssl binary and report its version.
-
-    Returns (path, version_string). Path is None when not found.
-    """
-    openssl = shutil.which("openssl")
-    if not openssl:
-        return None, ""
-    try:
-        out = subprocess.run(
-            [openssl, "version"], capture_output=True, text=True, timeout=10
-        )
-        return Path(openssl), out.stdout.strip()
-    except (subprocess.TimeoutExpired, OSError):
-        return Path(openssl), ""
-
-
 def is_gcc(cc: str | None = None) -> bool:
     """Heuristic: does the C compiler look like GCC?"""
     cc = cc or os.environ.get("CC", "")

@@ -11,7 +11,7 @@ import tarfile
 import tempfile
 import unittest
 
-from aria_deps import deps_build as deps
+from forgedeps import deps_build as deps
 
 
 class CliTests(unittest.TestCase):
@@ -22,7 +22,7 @@ class CliTests(unittest.TestCase):
         self.env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]))
 
     def run_cli(self, *arguments, success=True):
-        result = subprocess.run([sys.executable, "-m", "aria_deps", *map(str, arguments)],
+        result = subprocess.run([sys.executable, "-m", "forgedeps", *map(str, arguments)],
                                 cwd=self.root, env=self.env, capture_output=True,
                                 encoding="utf-8", errors="replace")
         if success:
@@ -80,7 +80,7 @@ install(FILES fixture.h DESTINATION include)
         lock.write_text(json.dumps({"schema": 2, "dependencies": {
             "fixture": {**spec, "resolved": record}}}), encoding="utf-8")
         config = self.root / "project_config.py"
-        config.write_text('''from aria_deps import Dependency, ProjectConfig
+        config.write_text('''from forgedeps import Dependency, ProjectConfig
 CONFIG = ProjectConfig(name="external-fixture", recipes=(Dependency(
     name="fixture", version="", url="", sha256="", root="", kind="cmake",
     license="MIT", license_files=("LICENSE",),
@@ -111,8 +111,8 @@ CONFIG = ProjectConfig(name="external-fixture", recipes=(Dependency(
 
     def test_cmake_module_and_command_version_are_available(self):
         directory = Path(self.run_cli("cmake-dir").stdout.strip())
-        self.assertTrue((directory / "AriaDeps.cmake").is_file())
-        self.assertEqual(self.run_cli("--version").stdout.strip(), "aria-deps 0.3.0")
+        self.assertTrue((directory / "ForgeDeps.cmake").is_file())
+        self.assertEqual(self.run_cli("--version").stdout.strip(), "forgedeps 0.4.0")
 
 
 if __name__ == "__main__":

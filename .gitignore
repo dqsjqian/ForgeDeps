@@ -8,3 +8,7 @@ build/
 .venv/
 venv/
 .pytest_cache/
+downloads/
+sources/
+state/
+tmp/

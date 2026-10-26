@@ -18,7 +18,7 @@ def deploy_qt_dlls(exe_name: str = "app.exe"):
     """Create a post-build hook deploying DLLs next to the executable.
 
     Usage:
-        Pipeline(..., qt_required=True, post_build=[deploy_qt_dlls("aria_agent.exe")])
+        Pipeline(..., qt_required=True, post_build=[deploy_qt_dlls("application.exe")])
 
     Steps (Windows only, no-op elsewhere):
         1. windeployqt -> Qt DLLs + plugins

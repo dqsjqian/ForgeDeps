@@ -5,8 +5,8 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-from aria_deps._console import safe_print
-from aria_deps import deps_build, deps_sources
+from forgedeps._console import safe_print
+from forgedeps import deps_build, deps_sources
 
 
 class ConsoleTests(unittest.TestCase):

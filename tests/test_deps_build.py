@@ -15,8 +15,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import fixtures
-from aria_deps import deps_build as deps
-from aria_deps import init_project
+from forgedeps import deps_build as deps
+from forgedeps import init_project
 
 init_project(fixtures.CONFIG)
 
@@ -66,7 +66,7 @@ class DependencyTests(unittest.TestCase):
     """Lock resolution: selection, pinning and failure semantics."""
 
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="ariaread-dependencies-test-")
+        temporary = tempfile.TemporaryDirectory(prefix="fixture-dependencies-test-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.manifest = self.root / "dependencies.json"
@@ -85,6 +85,15 @@ class DependencyTests(unittest.TestCase):
 
     def resolve(self, **kwargs):
         return deps.resolve(self.manifest, context=self.context, **kwargs)
+
+    def test_source_transport_is_independent_of_builder_kind(self):
+        self.write_manifest({"library": {**SOURCE, "artifact": "archive"}})
+        lock = self.resolve()
+        recipe = replace(fixtures.CONFIG.recipes[0], name="library", kind="git", patch="")
+        locked = deps.locked_recipes(lock, [recipe])[0]
+        self.assertEqual(locked.kind, "git")
+        self.assertEqual(locked.source_kind, "archive")
+        self.assertEqual(locked.sha256, DIGEST)
 
     def test_latest_means_highest_stable_release(self):
         record = self.resolve()["dependencies"]["library"]
@@ -456,7 +465,7 @@ class SourceTests(unittest.TestCase):
         with patch.object(deps, '_ACTIVE', None), \
                 patch.object(deps.urllib.request, 'urlopen', return_value=response) as network:
             self.assertEqual(deps.Context(self.root).get_bytes(response.url), b'public resolution')
-        self.assertEqual(network.call_args.args[0].get_header('User-agent'), 'aria-deps')
+        self.assertEqual(network.call_args.args[0].get_header('User-agent'), 'forgedeps')
 
     def test_exact_offline_content_cache_is_reused(self):
         data = b'locked archive'
@@ -496,45 +505,12 @@ class SourceTests(unittest.TestCase):
     def test_unrelated_or_shared_library_does_not_satisfy_static_artifact(self):
         lib = self.root / 'lib'
         lib.mkdir()
-        for name in ('libzstd.a', 'libz.dylib', 'zlib.dll'):
+        for name in ('libfixture_other.a', 'libfixture.dylib', 'fixture.dll'):
             (lib / name).write_text('wrong binary')
-        self.assertFalse(deps.artifact_present(self.root, 'lib/libz.a'))
-        (lib / 'zlibstatic.lib').write_text('correct static spelling')
-        self.assertTrue(deps.artifact_present(self.root, 'lib/libz.a'))
+        self.assertFalse(deps.artifact_present(self.root, 'lib/libfixture.a'))
+        (lib / 'fixture.lib').write_text('correct static spelling')
+        self.assertTrue(deps.artifact_present(self.root, 'lib/libfixture.a'))
 
-    def test_windows_zlib_static_names_preserve_exports_and_support_findzlib(self):
-        for original, compatible in [('zs.lib', 'zlibstatic.lib'), ('libzs.a', 'libz.a')]:
-            with self.subTest(original=original):
-                prefix = self.root / original
-                (prefix / 'lib').mkdir(parents=True)
-                (prefix / 'lib' / original).write_bytes(b'compiled static library')
-                deps.normalize_zlib_static(prefix)
-                self.assertEqual((prefix / 'lib' / original).read_bytes(), b'compiled static library')
-                self.assertEqual((prefix / 'lib' / compatible).read_bytes(), b'compiled static library')
-                self.assertTrue(deps.artifact_present(prefix, 'lib/libz.a'))
-                if deps.shutil.which('cmake'):
-                    (prefix / 'include').mkdir()
-                    (prefix / 'include/zlib.h').write_text('#define ZLIB_VERSION "1.3.2"\n')
-                    script = prefix / 'CMakeLists.txt'
-                    script.write_text('cmake_minimum_required(VERSION 3.20)\n'
-                                      'set(CMAKE_SYSTEM_NAME Windows)\nproject(FindZlibFixture NONE)\n'
-                                      'set(CMAKE_FIND_LIBRARY_PREFIXES "" "lib")\n'
-                                      'set(CMAKE_FIND_LIBRARY_SUFFIXES ".a" ".lib")\n'
-                                      f'set(ZLIB_ROOT "{prefix.as_posix()}")\n'
-                                      'set(ZLIB_USE_STATIC_LIBS ON)\nfind_package(ZLIB REQUIRED)\n'
-                                      # New FindZLIB versions know the upstream
-                                      # name; older versions require our alias.
-                                      f'if(NOT ZLIB_LIBRARY_RELEASE STREQUAL "{(prefix / "lib" / compatible).as_posix()}"\n'
-                                      f'   AND NOT ZLIB_LIBRARY_RELEASE STREQUAL "{(prefix / "lib" / original).as_posix()}")\n'
-                                      'message(FATAL_ERROR "FindZLIB selected another library: ${ZLIB_LIBRARY_RELEASE}")\nendif()\n')
-                    found = subprocess.run(['cmake', '-S', str(prefix), '-B', str(prefix / 'build')], encoding='utf-8', errors='replace',
-                                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                    self.assertEqual(found.returncode, 0, found.stdout)
-                deps.normalize_zlib_static(prefix)
-                (prefix / 'lib' / compatible).write_bytes(b'local modification')
-                with self.assertRaisesRegex(ValueError, 'Conflicting zlib'):
-                    deps.normalize_zlib_static(prefix)
-                self.assertEqual((prefix / 'lib' / compatible).read_bytes(), b'local modification')
 
     def test_corrupt_content_cache_is_rejected_and_preserved(self):
         dep = self.dep(b'original')
@@ -653,70 +629,10 @@ class SourceTests(unittest.TestCase):
         with patch.dict(deps.os.environ, {'CC': '"/toolchain with spaces/cl.exe"'}, clear=True):
             self.assertEqual(deps.windows_toolchain(), 'msvc')
 
-    def test_openssl_msvc_compiler_path_is_quoted_once_by_upstream(self):
-        selected = {'path': r'C:\Program Files\Compiler\cl.exe', 'arguments': ['/DSELECTED=1']}
-        original = '"' + selected['path'] + '" /DSELECTED=1'
-        with patch.dict(deps.os.environ, {'CC': original, 'CFLAGS': '/O2'}, clear=True), \
-                patch.object(deps.sys, 'platform', 'win32'), \
-                patch.object(deps, 'windows_toolchain', return_value='msvc'), \
-                patch.object(deps.shutil, 'which', return_value='available'), \
-                patch.object(deps, 'compiler', return_value=selected) as compiler, \
-                patch.object(deps, 'run') as run:
-            deps.build_openssl(self.root, self.root / 'prefix', 1)
-            compiler.assert_called_once_with(original)
-            configure = run.call_args_list[0].args[0]
-            self.assertIn('CC=' + selected['path'], configure)
-            self.assertIn('CFLAGS=/DSELECTED=1 /O2', configure)
-            self.assertEqual(deps.os.environ['CC'], original)
-            self.assertEqual(deps.os.environ['CFLAGS'], '/O2')
 
-    def test_openssl_uses_gcc_when_c_compiler_is_clang(self):
-        # The conda clang wrapper prepends -L<toolchain>/lib, so the legacy
-        # provider would link the toolchain's libcrypto instead of the
-        # just-built static library. OpenSSL must be built with gcc instead.
-        configure_calls = []
-        def fake_run(cmd, **kwargs):
-            configure_calls.append(cmd)
-        with patch.object(deps.sys, 'platform', 'linux'), \
-                patch.object(deps.shutil, 'which',
-                             side_effect=lambda name: '/toolchain/bin/gcc' if name == 'gcc'
-                             else '/toolchain/bin/' + name), \
-                patch.object(deps, 'run', side_effect=fake_run):
-            deps.build_openssl(self.root, self.root / 'prefix', 1,
-                               c_compiler='/toolchain/bin/clang')
-        configure = configure_calls[0]
-        self.assertIn('CC=/toolchain/bin/gcc', configure)
-        self.assertNotIn('CC=/toolchain/bin/clang', configure)
 
-    def test_openssl_keeps_gcc_compiler_untouched(self):
-        configure_calls = []
-        with patch.object(deps.sys, 'platform', 'linux'), \
-                patch.object(deps.shutil, 'which', return_value='/usr/bin/perl'), \
-                patch.object(deps, 'run',
-                             side_effect=lambda cmd, **kw: configure_calls.append(cmd)):
-            deps.build_openssl(self.root, self.root / 'prefix', 1,
-                               c_compiler='/usr/bin/gcc')
-        configure = configure_calls[0]
-        self.assertFalse(any(arg.startswith('CC=') for arg in configure))
 
-    def test_openssl_without_known_compiler_keeps_old_behavior(self):
-        configure_calls = []
-        with patch.object(deps.sys, 'platform', 'linux'), \
-                patch.object(deps.shutil, 'which', return_value='/usr/bin/perl'), \
-                patch.object(deps, 'run',
-                             side_effect=lambda cmd, **kw: configure_calls.append(cmd)):
-            deps.build_openssl(self.root, self.root / 'prefix', 1)
-        configure = configure_calls[0]
-        self.assertFalse(any(arg.startswith('CC=') for arg in configure))
 
-    def test_openssl_clang_without_gcc_is_an_actionable_error(self):
-        with patch.object(deps.sys, 'platform', 'linux'), \
-                patch.object(deps.shutil, 'which',
-                             side_effect=lambda name: '/usr/bin/' + name if name != 'gcc' else None), \
-                patch.object(deps, 'run'):
-            with self.assertRaisesRegex(ValueError, 'no gcc is on PATH'):
-                deps.build_openssl(self.root, self.root / 'prefix', 1,
-                                   c_compiler='/toolchain/bin/clang')
 
     def test_compiler_path_with_spaces_is_one_executable(self):
         executable = self.root / 'compiler with spaces'
@@ -891,7 +807,7 @@ class BuilderIntegrationTests(unittest.TestCase):
                 self.assertNotEqual(deps.component_identities(recipes, changed), original)
 
     def test_old_component_identity_cannot_short_circuit_transaction_rebuild(self):
-        with tempfile.TemporaryDirectory(prefix='ariaread-receipt-migration-') as temporary:
+        with tempfile.TemporaryDirectory(prefix='fixture-receipt-migration-') as temporary:
             work = Path(temporary).resolve()
             prefix = work / 'prefix'
             dependency = next(dep for dep in fixtures.RECIPES if dep.name == 'libfoo')
@@ -952,7 +868,7 @@ class OfflineTransactionTests(unittest.TestCase):
     def setUp(self):
         if not deps.shutil.which('cmake'):
             self.skipTest('CMake unavailable')
-        temporary = tempfile.TemporaryDirectory(prefix='ariaread-deps-fixture-')
+        temporary = tempfile.TemporaryDirectory(prefix='fixture-deps-fixture-')
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.work = self.root / 'work'
@@ -1089,7 +1005,7 @@ class OfflineTransactionTests(unittest.TestCase):
 
     def assert_doctest_utf8_discovery(self, discovery_script):
         """Run the installed upstream discovery module and its generated tests."""
-        with tempfile.TemporaryDirectory(prefix='ariaread-doctest-discovery-') as temporary:
+        with tempfile.TemporaryDirectory(prefix='fixture-doctest-discovery-') as temporary:
             root = Path(temporary)
             executable = root / 'doctest fixture.py'
             cases = ['中文检索,精确过滤', 'Unicode suite selection']

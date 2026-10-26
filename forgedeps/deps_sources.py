@@ -1,11 +1,11 @@
 """Editable dependency sources, independent from disposable build snapshots.
 
-Every dependency lives in a flat, user-owned directory such as deps/curl or
-deps/aria. The lock file only chooses what a missing directory starts from.
+Every dependency lives in a flat, user-owned directory such as deps/library-a or
+deps/library-b. The lock file only chooses what a missing directory starts from.
 Afterwards the directory's actual contents are the build input: users may
 edit files, git pull or switch branches and take responsibility for that.
 
-deps/.ariaread-sources/<name>.json remembers which locked selection created a
+deps/.forgedeps-sources/<name>.json remembers which locked selection created a
 directory and its untouched identity. A later lock change replaces only an
 untouched directory (the previous tree is a rollback target and is deleted
 once the swap succeeds). Changed directories are kept and reported; the new
@@ -38,7 +38,7 @@ def fingerprint(value):
 @contextmanager
 def lock_output(path):
     """OS file lock; identical semantics to the lock used for dependencies.json."""
-    directory = Path(tempfile.gettempdir()) / "aria-dependency-locks"
+    directory = Path(tempfile.gettempdir()) / "forgedeps-source-locks"
     directory.mkdir(exist_ok=True)
     key = hashlib.sha256(str(Path(path).resolve()).encode()).hexdigest()
     with (directory / key).open("a+b") as stream:
@@ -64,7 +64,7 @@ def lock_output(path):
                 fcntl.flock(stream, fcntl.LOCK_UN)
 
 
-STATE_DIRECTORY = '.ariaread-sources'
+STATE_DIRECTORY = '.forgedeps-sources'
 
 
 def set_state_dirname(dirname: str) -> None:

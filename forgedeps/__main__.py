@@ -12,7 +12,6 @@ import subprocess
 import sys
 
 from . import deps_build as pipeline
-from . import providers
 
 
 @contextmanager
@@ -32,12 +31,9 @@ def diagnostic_output():
 
 def load_config(path: Path | None) -> pipeline.ProjectConfig:
     if path is None:
-        return pipeline.ProjectConfig(
-            name="aria-deps",
-            providers={"sqlite": providers.resolve_sqlite, "quickjs": providers.resolve_quickjs},
-        )
+        return pipeline.ProjectConfig(name="forgedeps")
     path = path.resolve(strict=True)
-    name = "_aria_deps_config_" + hashlib.sha256(str(path).encode()).hexdigest()[:16]
+    name = "_forgedeps_config_" + hashlib.sha256(str(path).encode()).hexdigest()[:16]
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise ValueError(f"Cannot load project configuration: {path}")
@@ -54,11 +50,11 @@ def load_config(path: Path | None) -> pipeline.ProjectConfig:
     return config
 
 
-def versions(values: list[str]) -> dict[str, str]:
+def versions(values: list[str], *, allow_empty=False) -> dict[str, str]:
     result = {}
     for value in values:
         name, separator, version = value.partition("=")
-        if not separator or not name or not version or name in result:
+        if not separator or not name or (not version and not allow_empty) or name in result:
             raise ValueError("--version requires unique NAME=VERSION assignments")
         result[name] = version
     return result
@@ -66,9 +62,37 @@ def versions(values: list[str]) -> dict[str, str]:
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
-    root.add_argument("--version", action="version", version="aria-deps 0.3.0")
+    root.add_argument("--version", action="version", version="forgedeps 0.4.0")
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("cmake-dir", help="print the installed CMake module directory")
+    commands.add_parser("home", help="print the shared workspace directory")
+    initialize = commands.add_parser("init", help="create/register a shared workspace")
+    initialize.add_argument("workspace", type=Path)
+    shared = commands.add_parser("environment", help="build injected recipes into shared artifact slots")
+    shared.add_argument("--project-config", type=Path, required=True)
+    shared.add_argument("--file", type=Path, default=Path("dependencies.json"))
+    shared.add_argument("--home", type=Path)
+    shared.add_argument("--output", type=Path, required=True)
+    shared.add_argument("--profile", default="tests")
+    shared.add_argument("--tls-backend", default="auto")
+    shared.add_argument("--only", default="")
+    shared.add_argument("--c")
+    shared.add_argument("--cxx")
+    shared.add_argument("--toolchain", type=Path)
+    shared.add_argument("--build-config", default="Release")
+    shared.add_argument("--cmake-option", action="append", default=[])
+    shared.add_argument("--source", action="append", default=[], metavar="NAME=PATH")
+    shared.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
+    shared.add_argument("--expect-cmake", action="append", default=[], metavar="NAME=VALUE")
+    shared.add_argument("--check", action="store_true", help="verify the existing output without building")
+    shared.add_argument("--offline", action="store_true")
+    shared.add_argument("--force", action="store_true")
+    shared.add_argument("--jobs", type=int)
+    verify_shared = commands.add_parser("verify-environment", help="read-only verification of shared artifacts")
+    verify_shared.add_argument("--environment", type=Path, required=True)
+    consume = commands.add_parser("run", help="hold the complete dependency graph lease while running a command")
+    consume.add_argument("--environment", type=Path, required=True)
+    consume.add_argument("argv", nargs=argparse.REMAINDER)
     resolve = commands.add_parser("resolve", help="resolve or reuse locked dependency selections")
     resolve.add_argument("--file", type=Path, default=Path("dependencies.json"))
     resolve.add_argument("--output", type=Path, help="write an effective lock without changing the input")
@@ -132,13 +156,41 @@ def selection(values: list[str]) -> list[str] | None:
 
 
 def dispatch(args):
+    if args.command == "init":
+        from .home import register_workspace
+        return {"home": str(register_workspace(args.workspace))}
+    if args.command == "environment":
+        from .environments import build_environment, verify_environment, write_environment
+        if args.jobs is not None and args.jobs < 1:
+            raise ValueError("--jobs must be positive")
+        kwargs = dict(config=load_config(args.project_config), home=args.home,
+            profile=args.profile, tls_backend=args.tls_backend, only=args.only,
+            offline=args.offline, c=args.c, cxx=args.cxx,
+            toolchain=str(args.toolchain.resolve()) if args.toolchain else None,
+            configuration=args.build_config, cmake_options=tuple(args.cmake_option),
+            source_overrides=versions(args.source), environment=versions(args.env, allow_empty=True),
+            expected_settings=versions(args.expect_cmake, allow_empty=True),
+            jobs=args.jobs, force=args.force)
+        if args.check:
+            result = verify_environment(args.file, args.output, **kwargs)
+        else:
+            result = build_environment(args.file, **kwargs)
+            write_environment(args.output, result)
+        return {"environment": str(args.output.resolve()), **result.to_dict()}
+    if args.command == "verify-environment":
+        from .environments import read_environment
+        from .build_kit.session import assert_parent_covers_environment
+        result = read_environment(args.environment)
+        with result.lease():
+            assert_parent_covers_environment(result)
+            return {"verified": True, **result.to_dict()}
     if args.command == "resolve":
         config = load_config(args.project_config)
         return pipeline.resolve(
             args.file, args.output, versions=versions(args.version), only=selection(args.only),
             update=args.update, config=config,
             context=pipeline.Context(args.cache or args.file.parent / "build/deps/resolver",
-                                     offline=args.offline, user_agent="aria-deps"),
+                                     offline=args.offline, user_agent="forgedeps"),
         )
     if args.command == "read":
         result = pipeline.read_resolved(args.file, selection(args.only))
@@ -183,13 +235,26 @@ def main(argv=None) -> int:
         print(Path(__file__).resolve().parent / "cmake")
         return 0
     try:
+        if args.command == "home":
+            from .home import resolve_home
+            print(resolve_home())
+            return 0
+        if args.command == "run":
+            from .environments import read_environment
+            command = args.argv[1:] if args.argv and args.argv[0] == "--" else args.argv
+            if not command:
+                raise ValueError("run requires a command after --")
+            environment = read_environment(args.environment)
+            process_env = dict(os.environ, FORGEDEPS_ENVIRONMENT=str(args.environment.resolve()))
+            with environment.lease():
+                return subprocess.run(command, env=process_env).returncode
         # Keep stdout machine-readable even when builds and downloaders log.
         with diagnostic_output():
             result = dispatch(args)
         print(json.dumps(result, indent=2, sort_keys=True, default=str))
         return 0
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
-        print(f"aria-deps: {error}", file=sys.stderr)
+        print(f"forgedeps: {error}", file=sys.stderr)
         return 1
 
 
