@@ -16,6 +16,7 @@ from ..store import verify_artifact
 from ..environments import read_environment
 from ..home import resolve_home
 from ..leases import artifact_graph
+from ..process_environment import merge_environments as merge_process_environments
 
 
 def source_checkout_path(root: Path, *, name, home=None) -> Path:
@@ -127,7 +128,7 @@ def _prefix_environments(directories, environment):
 @contextmanager
 def leased_environment(receipts, *, env=None):
     """Yield a child environment backed by an immutable merged lease receipt."""
-    environment = dict(os.environ if env is None else env)
+    environment = merge_process_environments(os.environ if env is None else env)
     selected = merge_environments(receipts)
     assert_parent_covers_environment(selected, environment)
     temporary = None
@@ -165,7 +166,7 @@ def run_session(commands, *, cwd=None, env=None, run_command=None,
     run_command receives (command, environment); post_build receives environment.
     """
     directory = Path(cwd or Path.cwd()).resolve()
-    environment = dict(os.environ if env is None else env)
+    environment = merge_process_environments(os.environ if env is None else env)
     commands = [list(map(str, command)) for command in commands]
     if any(not command for command in commands):
         raise ValueError("Build session commands cannot be empty")

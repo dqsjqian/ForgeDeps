@@ -25,6 +25,7 @@ import uuid
 from .artifacts import Artifact, BuildContext, BuildRequest, Environment
 from .home import prepare_home, resolve_home
 from .leases import artifact_graph, slot_locks
+from .process_environment import merge_environments, select_environment
 from . import deps_sources as sources
 
 SCHEMA = 1
@@ -330,9 +331,10 @@ def _prepare_request(request, home, *, create):
         raise ValueError("Build environment must map string names to string values")
     # Pure headers have no ambient compiler inputs. Explicit recipe environment
     # still participates, but CMake's first-configure CC/CXX exports do not.
-    inherited = {} if request.header_only else {
-        key: os.environ[key] for key in BUILD_ENVIRONMENT_KEYS if key in os.environ}
-    environment = {**inherited, **environment}
+    inherited = {} if request.header_only else select_environment(BUILD_ENVIRONMENT_KEYS, os.environ)
+    # Windows names are case-insensitive; a mixed-case recipe spelling must
+    # replace the uppercase copy inherited from the process, not join it.
+    environment = merge_environments(inherited, environment)
     # A probed compiler is authoritative. CMake exports CC/CXX during its first
     # configure but not cached reconfiguration; normalize those selectors to the
     # actual compiler/arguments so equivalent consumption sessions share identity.
@@ -436,8 +438,7 @@ def build_package(request: BuildRequest, *, home: Path | None = None, force: boo
                 replaced = True
             prefix.mkdir()
             started = True
-            process_env = dict(os.environ)
-            process_env.update(environment)
+            process_env = merge_environments(os.environ, environment)
             dependencies = transaction / "requires-environment.json"
             dependencies.write_text(json.dumps({"schema": SCHEMA, **Environment(requires).to_dict()}),
                                     encoding="utf-8")

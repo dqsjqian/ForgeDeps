@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 
 from .home import prepare_home
+from .process_environment import merge_environments, select_environment
 from .store import BUILD_ENVIRONMENT_KEYS
 
 
@@ -151,6 +152,10 @@ def _project(configuration: str) -> str:
         variables.append(f"CMAKE_{prefix}_FLAGS_{configuration.upper()}")
     return r'''cmake_minimum_required(VERSION 3.21)
 project(ForgeDepsToolchainProbe LANGUAGES C CXX)
+# Each isolated probe builds one selected SDK. Xcode's optional platform
+# suffix leaks an unresolved EFFECTIVE_PLATFORM_NAME into TARGET_FILE, so
+# suppress that suffix rather than guessing the actual archive location.
+set_property(GLOBAL PROPERTY XCODE_EMIT_EFFECTIVE_PLATFORM_NAME OFF)
 add_library(forgedeps_probe STATIC probe.c probe.cpp)
 # The first target checks the complete requested flags, including LTO. A second
 # object carrier disables LTO only, so ABI markers remain readable without a
@@ -334,9 +339,7 @@ def probe_toolchain(*, configuration="Release", c=None, cxx=None, toolchain=None
     for option in options:
         if option.startswith(("-S", "-B", "--build", "--install", "--preset", "-P")):
             raise ValueError(f"Option cannot replace the toolchain probe project: {option}")
-    env = dict(os.environ)
-    if environment is not None:
-        env.update({str(key): str(value) for key, value in environment.items()})
+    env = merge_environments(os.environ, environment)
     cmake = _executable("cmake", env)
     generator = []
     if not env.get("CMAKE_GENERATOR") and not any(x == "-G" or x.startswith("-G") for x in options):
@@ -432,7 +435,7 @@ def probe_toolchain(*, configuration="Release", c=None, cxx=None, toolchain=None
                                                 "inputs": [{"path": path, "sha256": digest}
                                                            for path, digest in sorted(inputs.items())]},
                   "sdk": _sdk(record, actual_compilers, env),
-                  "environment": {key: env[key] for key in sorted(_BUILD_ENV) if env.get(key)},
+                  "environment": select_environment(_BUILD_ENV, env),
                   "cmake_options": options}
         quote = subprocess.list2cmdline if os.name == "nt" else shlex.join
         for variable, key in (("CC", "c"), ("CXX", "cxx")):

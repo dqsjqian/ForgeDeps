@@ -12,6 +12,7 @@ import subprocess
 from .artifacts import BuildRequest, Environment, Artifact
 from . import deps_build as deps
 from .home import prepare_home, resolve_home
+from .process_environment import merge_environments
 from .store import build_package
 from .toolchains import probe_toolchain
 from .workspace_sources import prepare_source, verify_source
@@ -213,11 +214,12 @@ def build_environment(file: Path, *, config: deps.ProjectConfig, home=None,
                     raise ValueError(f'Consumer {name} differs from the dependency toolchain probe; '
                                      'express additional ABI settings through CMake cache options '
                                      'or an explicit toolchain input, then rebuild the environment')
-        build_env = dict(target.get('environment', {}))
-        build_env.update(environment or {})
-        for name in ('MSYS2_ROOT', 'PERL', 'MAKE'):
-            if name in os.environ:
-                build_env.setdefault(name, os.environ[name])
+        build_env = merge_environments(target.get('environment', {}), environment or {})
+        # Ambient tool locations are defaults only; an explicit value wins and
+        # never joins a case-variant duplicate inherited from the process.
+        ambient = {name: os.environ[name] for name in ('MSYS2_ROOT', 'PERL', 'MAKE')
+                   if name in os.environ}
+        build_env = merge_environments(ambient, build_env)
         inputs = {str(index) + '/' + Path(path).name: Path(path)
                   for index, path in enumerate(dep.builder_inputs)}
         request = BuildRequest(
