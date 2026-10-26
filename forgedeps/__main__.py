@@ -42,7 +42,11 @@ def load_config(path: Path | None) -> pipeline.ProjectConfig:
     sys.path.insert(0, str(path.parent))
     try:
         spec.loader.exec_module(module)
-        config = module.make_config() if hasattr(module, "make_config") else getattr(module, "CONFIG", None)
+        # An explicitly selected configuration takes precedence over imported
+        # helper factories which may also be named make_config(names, ...).
+        config = getattr(module, "CONFIG", None)
+        if config is None and hasattr(module, "make_config"):
+            config = module.make_config()
     finally:
         sys.path.pop(0)
     if not isinstance(config, pipeline.ProjectConfig):

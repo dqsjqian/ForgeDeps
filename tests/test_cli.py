@@ -31,6 +31,17 @@ class CliTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout)
         return result
 
+    def test_explicit_config_takes_precedence_over_imported_factory(self):
+        from forgedeps.__main__ import load_config
+        helper = self.root / "recipe_helpers.py"
+        helper.write_text('from forgedeps import ProjectConfig\n'
+                          'def make_config(names):\n'
+                          '    return ProjectConfig(name=names[0])\n')
+        selected = self.root / "recipes.py"
+        selected.write_text('from recipe_helpers import make_config\n'
+                            'CONFIG = make_config(("selected",))\n')
+        self.assertEqual(load_config(selected).name, "selected")
+
     def test_file_fetch_stdout_is_json_and_offline_edits_are_rejected(self):
         header = self.root / "fixture header.h"
         header.write_bytes(b"#define EXTERNAL_FIXTURE 42\n")
