@@ -53,6 +53,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from . import deps_sources as sources
+from . import fsops
 from ._console import safe_print as print
 
 
@@ -1415,7 +1416,7 @@ def install_component(dep, available, run_root, prefix, jobs, common, expected_s
                       c_compiler=None):
     # One flat directory per dependency; a rebuild discards the previous one.
     holder = run_root / dep.name
-    shutil.rmtree(holder, ignore_errors=True)
+    fsops.remove_tree(holder)
     holder.mkdir()
     source = holder / 'source'
     actual_source = sources.snapshot(available, source, expected_source)
@@ -1520,7 +1521,7 @@ def install(file, work, prefix, source_dir, *, config, profile='tests', tls_back
         # Component files that must survive the prefix swap are staged under
         # runs/.staged for the duration of the transaction only.
         staged = runs / '.staged'
-        shutil.rmtree(staged, ignore_errors=True)
+        fsops.remove_tree(staged)
         if completed and previous.get('identity') != identity:
             staged.mkdir()
             for name in sorted(completed):
@@ -1555,7 +1556,7 @@ def install(file, work, prefix, source_dir, *, config, profile='tests', tls_back
                     done.add(dep.name)
                 state.update(completed=sorted(done), dependencies=records, components=components)
         finally:
-            shutil.rmtree(staged, ignore_errors=True)
+            fsops.remove_tree(staged)
         print(f'Installed dependency prefix from current editable sources: {prefix}')
         return prefix
 

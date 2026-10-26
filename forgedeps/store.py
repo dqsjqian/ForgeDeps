@@ -27,13 +27,18 @@ from .home import prepare_home, resolve_home
 from .leases import artifact_graph, slot_locks
 from .process_environment import merge_environments, select_environment
 from . import deps_sources as sources
+from . import fsops
 
 SCHEMA = 1
 # These inherited variables can change compilation or dependency discovery.
 # Nonstandard recipe inputs must be supplied explicitly through environment.
 BUILD_ENVIRONMENT_KEYS = (
     "CC", "CXX", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS", "CL", "_CL_", "LINK", "_LINK_",
-    "AR", "ARFLAGS", "AS", "LD", "NM", "RANLIB", "RC", "WINDRES", "MAKEFLAGS",
+    # RC and WINDRES are deliberately absent: CMake finds the resource compiler
+    # itself and the probe records the resolved tool, while an inherited name
+    # made the identity depend on the launching shell (MSYS2 exports it, a
+    # Python-launched configure does not), producing two identities per job.
+    "AR", "ARFLAGS", "AS", "LD", "NM", "RANLIB", "MAKEFLAGS",
     "CMAKE_TOOLCHAIN_FILE", "CMAKE_PREFIX_PATH", "CMAKE_GENERATOR", "CMAKE_GENERATOR_PLATFORM",
     "CMAKE_GENERATOR_TOOLSET", "PKG_CONFIG", "PKG_CONFIG_PATH", "PKG_CONFIG_LIBDIR",
     "PKG_CONFIG_SYSROOT_DIR", "SDKROOT", "MACOSX_DEPLOYMENT_TARGET",
@@ -279,7 +284,7 @@ def _recover(root, prefix):
             continue
         if record.get("state") == "committed":
             _verify_slot(prefix)
-            shutil.rmtree(transaction)
+            fsops.remove_tree(transaction)
             continue
         if record.get("state") != "installing":
             continue
@@ -417,6 +422,11 @@ def _input_differences(prefix: Path, current: dict) -> str:
         saved = json.loads(manifest.read_text(encoding="utf-8")).get("inputs", {})
     except (OSError, ValueError):
         return ""
+    # The manifest holds JSON, so tuples read back as lists and an empty
+    # sequence changes type across the round trip. Compare the serialised form
+    # so a real change is never buried under a type difference.
+    saved = json.loads(json.dumps(saved, sort_keys=True, default=list))
+    current = json.loads(json.dumps(current, sort_keys=True, default=list))
     lines = []
     for key in sorted(set(saved) | set(current)):
         before, after = saved.get(key), current.get(key)
@@ -527,10 +537,10 @@ def build_package(request: BuildRequest, *, home: Path | None = None, force: boo
             # Failed output is diagnostic data under HOME/state/transactions, never a usable
             # second slot. It is retained without changing the prior receipt.
             if not started:
-                shutil.rmtree(transaction)
+                fsops.remove_tree(transaction)
             raise
         else:
-            shutil.rmtree(transaction)
+            fsops.remove_tree(transaction)
             return current
 
 

@@ -21,6 +21,18 @@ class InputDifferenceTests(unittest.TestCase):
         self.assertIn("environment.CMAKE_CXX_FLAGS", report)
         self.assertNotIn("target", report)
 
+    def test_empty_sequences_do_not_differ_by_container_type(self):
+        # The manifest is JSON: an empty tuple reads back as a list.
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp)
+            (prefix / "manifest.json").write_text(json.dumps({"inputs": {
+                "artifacts": [], "licenses": [], "options": {"cmake_options": []},
+            }}), encoding="utf-8")
+            report = _input_differences(prefix, {
+                "artifacts": (), "licenses": (), "options": {"cmake_options": ()},
+            })
+        self.assertEqual(report, "")
+
     def test_missing_manifest_is_silent(self):
         self.assertEqual(_input_differences(Path("/nonexistent"), {"a": 1}), "")
 

@@ -4,6 +4,7 @@ import json
 import shutil
 import tempfile
 
+from . import fsops
 from . import deps_build as deps, deps_sources as sources
 from .home import prepare_home
 from .source_cache import fetch_download
@@ -71,7 +72,7 @@ def prepare_source(dependency, *, home=None, offline=False, with_identity=False)
                 deps.atomic_json(receipt, {'schema': 1, 'requested': request, 'pristine': pristine})
             except BaseException:
                 if source.exists():
-                    shutil.rmtree(source)
+                    fsops.remove_tree(source)
                 if backup.exists():
                     backup.rename(source)
                 raise

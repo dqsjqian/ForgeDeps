@@ -27,6 +27,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ._console import safe_print as print
+from . import fsops
 
 
 def fingerprint(value):
@@ -242,38 +243,8 @@ def head(value):
 
 
 def remove_retry(path):
-    """Delete a rollback target, tolerating Windows' brief directory locks.
-
-    Antivirus scans and a just-exited git's handles can delay a plain rmtree;
-    silent ignore_errors would leave the very leftovers these deletions exist
-    to prevent. Retry briefly, then fail loudly.
-    """
-    import time
-
-    def clear_readonly(function, name, exc_info):
-        error = exc_info[1]
-        if os.name != 'nt' or not isinstance(error, PermissionError):
-            raise error
-        # Git object files and extracted build artifacts can carry the Windows
-        # read-only attribute. A delay does not clear it; make the failed path
-        # writable, then retry the exact filesystem operation.
-        os.chmod(name, stat.S_IREAD | stat.S_IWRITE)
-        function(name)
-
-    for attempt in range(4):
-        try:
-            if os.name == 'nt':
-                shutil.rmtree(path, onerror=clear_readonly)
-            else:
-                shutil.rmtree(path)
-            return
-        except FileNotFoundError:
-            return
-        except OSError:
-            if attempt == 3:
-                raise
-            time.sleep(0.1 * (attempt + 1))
-
+    """Delete a rollback target, tolerating Windows locks and read-only files."""
+    fsops.remove_tree(path)
 
 def replace_directory(source, candidate, state_root, scratch):
     """Swap a fully prepared candidate in; restore the previous tree on failure.
