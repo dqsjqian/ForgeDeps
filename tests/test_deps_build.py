@@ -450,6 +450,14 @@ class SourceTests(unittest.TestCase):
         return replace(fixtures.RECIPES[0], version='1.0', url=url,
                        sha256=deps.hashlib.sha256(data).hexdigest())
 
+    def test_context_download_needs_no_active_build_project(self):
+        response = io.BytesIO(b'public resolution')
+        response.url = 'https://example.invalid/metadata'
+        with patch.object(deps, '_ACTIVE', None), \
+                patch.object(deps.urllib.request, 'urlopen', return_value=response) as network:
+            self.assertEqual(deps.Context(self.root).get_bytes(response.url), b'public resolution')
+        self.assertEqual(network.call_args.args[0].get_header('User-agent'), 'aria-deps')
+
     def test_exact_offline_content_cache_is_reused(self):
         data = b'locked archive'
         dep = self.dep(data)

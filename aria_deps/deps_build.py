@@ -272,7 +272,9 @@ class Context:
         self.user_agent = user_agent
 
     def request_user_agent(self) -> str:
-        return self.user_agent if self.user_agent is not None else _project().user_agent
+        if self.user_agent is not None:
+            return self.user_agent
+        return _ACTIVE.user_agent if _ACTIVE is not None else "aria-deps"
 
     def get_bytes(self, url: str) -> bytes:
         if self.offline:
@@ -500,7 +502,8 @@ def resolve(file: Path, effective_file: Path | None = None, *,
     """
     output = effective_file or file
     versions = versions or {}
-    context = context or Context(file.parent / "build/deps/resolver")
+    context = context or Context(file.parent / "build/deps/resolver",
+                                 user_agent=config.user_agent if config is not None else None)
     with lock_output(output):
         document = load_json(file)
         entries = document["dependencies"]
