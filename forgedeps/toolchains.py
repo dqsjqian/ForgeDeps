@@ -440,8 +440,14 @@ def probe_toolchain(*, configuration="Release", c=None, cxx=None, toolchain=None
                   # Toolchains may prepend their flags to cache inputs. Keep
                   # those inputs distinct from the effective normal variables
                   # above, so replay does not prepend the same flags twice.
+                  # Only the flag cache entries are replayed (a toolchain may
+                  # prepend its platform flags to a caller's value). Compiler
+                  # paths are recorded separately in "c"/"cxx"; keeping them
+                  # here made the identity depend on whether the caller named
+                  # the compiler explicitly, so a dependency built by the Python
+                  # entry and verified by the CMake bridge had two identities.
                   "cmake_cache": {item["name"]: item["value"] for item in replies["cache"]["entries"]
-                                  if item["name"] in record},
+                                  if item["name"] in record and "_FLAGS" in item["name"]},
                   "system": {key: value for key, value in record.items() if any(
                       part in key for part in ("SYSTEM", "SYSROOT", "OSX_", "ANDROID", "CROSSCOMPILING"))},
                   "abi": {"pointer_size": record["CMAKE_SIZEOF_VOID_P"], "msvc_runtime": record["runtime"],

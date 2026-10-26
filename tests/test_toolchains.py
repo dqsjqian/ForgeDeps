@@ -154,6 +154,13 @@ file(WRITE "${CMAKE_BINARY_DIR}/actual.json"
         self.assertEqual(Path(actual["compiler"]).resolve(), Path(target["cxx"]["path"]).resolve())
         self.assertTrue(list((prefix / "lib").iterdir()))
 
+    def test_compile_cache_identity_ignores_how_the_compiler_was_named(self):
+        # The identity must not depend on whether a caller passed
+        # -DCMAKE_C_COMPILER or let CMake find it: only flags are replayed.
+        target = self.baseline
+        self.assertTrue(target["cmake_cache"])
+        self.assertEqual({name for name in target["cmake_cache"] if "_FLAGS" not in name}, set())
+
     def test_toolchain_flag_prefix_is_applied_once_when_builder_replays(self):
         from forgedeps.artifacts import BuildContext
         from forgedeps.environments import _cmake_build
