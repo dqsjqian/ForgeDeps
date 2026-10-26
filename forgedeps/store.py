@@ -401,8 +401,45 @@ def verify_request(request: BuildRequest, artifact: Artifact, *, home: Path | No
         verify_artifact(dependency)
     inputs, _, _ = _request_inputs(request, source, requires, target, options, environment, artifacts, licenses)
     if _fingerprint(inputs) != actual.fingerprint:
-        raise ValueError(f"Artifact inputs changed; rebuild the environment: {prefix}")
+        raise ValueError("Artifact inputs changed; rebuild the environment: "
+                         f"{prefix}{_input_differences(prefix, inputs)}")
     return actual
+
+
+def _input_differences(prefix: Path, current: dict) -> str:
+    """Name the inputs that differ from the manifest, so a mismatch is actionable.
+
+    A container, a generator or a toolchain probe can change one setting that
+    is invisible in a fingerprint; the caller otherwise has no way to see which.
+    """
+    manifest = prefix / "manifest.json"
+    try:
+        saved = json.loads(manifest.read_text(encoding="utf-8")).get("inputs", {})
+    except (OSError, ValueError):
+        return ""
+    lines = []
+    for key in sorted(set(saved) | set(current)):
+        before, after = saved.get(key), current.get(key)
+        if before == after:
+            continue
+        if isinstance(before, dict) and isinstance(after, dict):
+            inner = []
+            for name in sorted(set(before) | set(after)):
+                if before.get(name) != after.get(name):
+                    inner.append(f"{name}: {before.get(name)!r} -> {after.get(name)!r}")
+            lines.extend(f"  {key}.{item}" for item in inner) or lines.append(f"  {key}: changed")
+        elif isinstance(before, list) and isinstance(after, list):
+            added = [item for item in after if item not in before]
+            removed = [item for item in before if item not in after]
+            detail = []
+            if removed:
+                detail.append(f"removed {removed!r}")
+            if added:
+                detail.append(f"added {added!r}")
+            lines.append(f"  {key}: {'; '.join(detail) or 'order or content changed'}")
+        else:
+            lines.append(f"  {key}: {before!r} -> {after!r}")
+    return ("\n" + "\n".join(lines[:12])) if lines else ""
 
 
 def build_package(request: BuildRequest, *, home: Path | None = None, force: bool = False) -> Artifact:
