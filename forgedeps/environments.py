@@ -59,9 +59,13 @@ def _cmake_build(ctx):
         name = option.removeprefix('-D').split('=', 1)[0].split(':', 1)[0]
         if name in ('CMAKE_INSTALL_PREFIX', 'CMAKE_PREFIX_PATH'):
             raise ValueError(f'{name} is managed by ForgeDeps; inject dependency recipes instead')
+    # Artifact names are part of a recipe's contract and must not depend on
+    # the configuration: projects such as zlib (libzsd.a) and curl
+    # (libcurl-d.a) add a Debug postfix unless it is cleared explicitly.
     command += ['-DCMAKE_POSITION_INDEPENDENT_CODE=ON', '-DBUILD_SHARED_LIBS=OFF',
                 '-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF',
                 '-DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF',
+                '-DCMAKE_DEBUG_POSTFIX=',
                 *options]
     # Pin the configuration that was actually probed. In particular, normal
     # variables set by toolchain files and environment-initialized flags are
