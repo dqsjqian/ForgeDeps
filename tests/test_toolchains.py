@@ -199,6 +199,65 @@ file(WRITE "${CMAKE_BINARY_DIR}/flags.txt" "${CMAKE_CXX_FLAGS}")
         self.assertTrue(targets[1]["label"].startswith("iossimulator-arm64-"))
         self.assertNotEqual(targets[0]["sdk"], targets[1]["sdk"])
 
+    @unittest.skipUnless(sys.platform == "darwin", "Xcode generator requires macOS")
+    def test_xcode_generator_probe_reads_the_real_platform_archive(self):
+        # Xcode appends ${EFFECTIVE_PLATFORM_NAME} to TARGET_FILE unless the
+        # probe project suppresses it, which made the archive path unusable.
+        def sdk(name):
+            result = subprocess.run(["xcrun", "--sdk", name, "--show-sdk-path"],
+                                    capture_output=True, text=True)
+            if result.returncode:
+                self.skipTest(f"{name} SDK unavailable")
+            return result.stdout.strip()
+        expected = {"iphoneos": "ios-arm64-", "iphonesimulator": "iossimulator-arm64-"}
+        for name, prefix in expected.items():
+            with self.subTest(sdk=name):
+                target = self.probe(configuration="Debug", cmake_options=(
+                    "-G", "Xcode", "-DCMAKE_SYSTEM_NAME=iOS", "-DCMAKE_OSX_ARCHITECTURES=arm64",
+                    "-DCMAKE_OSX_SYSROOT=" + sdk(name),
+                    "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY",
+                    "-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO"))
+                self.assertEqual(target["platform"], "iOS")
+                self.assertTrue(target["label"].startswith(prefix), target["label"])
+                self.assertNotIn("EFFECTIVE_PLATFORM_NAME", json.dumps(target))
+
+    @unittest.skipUnless(shutil.which("cmake"), "CMake unavailable")
+    def test_real_ndk_probe_honours_abi_platform_and_stl(self):
+        # Without explicit ANDROID_ABI/ANDROID_PLATFORM the official NDK
+        # toolchain silently falls back to armeabi-v7a / android-21.
+        candidates = [os.environ.get("ANDROID_NDK_HOME"), os.environ.get("ANDROID_NDK_ROOT"),
+                      os.environ.get("NDK_ROOT")]
+        sdk_root = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
+        if sdk_root:
+            candidates.append(str(Path(sdk_root) / "ndk"))
+        local = Path.home() / "Library/Android/sdk/ndk"
+        if local.is_dir():
+            candidates.extend(str(path) for path in sorted(local.iterdir(), reverse=True))
+        toolchain = None
+        for candidate in candidates:
+            if not candidate:
+                continue
+            for root in (Path(candidate), Path(candidate) / "build"):
+                script = root / "cmake/android.toolchain.cmake"
+                if script.is_file():
+                    toolchain = script
+                    break
+            if toolchain:
+                break
+        if toolchain is None:
+            self.skipTest("No Android NDK installed")
+        target = self.probe(toolchain=str(toolchain), cmake_options=(
+            "-DANDROID_ABI=arm64-v8a", "-DANDROID_PLATFORM=android-24",
+            "-DANDROID_STL=c++_shared", "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY"))
+        self.assertTrue(target["label"].startswith("android-api24-arm64-"), target["label"])
+        for language in ("c", "cxx"):
+            fragments = []
+            for group in target[language]["compile"].values():
+                for item in group:
+                    fragments.append(item["fragment"] if isinstance(item, dict) else item)
+            self.assertNotIn("armv7", " ".join(fragments))
+        self.assertEqual(target["c"]["abi"][0]["arch"], "arm64")
+
     @unittest.skipIf(os.name == "nt", "Alternate native GNU discovery is Unix-only")
     def test_available_gcc_is_used_without_substituting_clang(self):
         candidates = [(shutil.which(f"gcc-{version}"), shutil.which(f"g++-{version}"))

@@ -7,9 +7,9 @@ function(_forgedeps_run output)
     if(ForgeDeps_PYTHON_EXECUTABLE)
         set(_python "${ForgeDeps_PYTHON_EXECUTABLE}")
     else()
-        find_package(Python3 3.10 QUIET COMPONENTS Interpreter)
+        find_package(Python3 3.14 QUIET COMPONENTS Interpreter)
         if(NOT Python3_Interpreter_FOUND)
-            message(FATAL_ERROR "ForgeDeps requires Python 3.10+ for resolution or source fetching")
+            message(FATAL_ERROR "ForgeDeps requires Python 3.14+ for resolution or source fetching")
         endif()
         set(_python "${Python3_EXECUTABLE}")
     endif()
@@ -119,7 +119,8 @@ function(forgedeps_environment)
         CMAKE_C_FLAGS CMAKE_CXX_FLAGS CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS
         CMAKE_STATIC_LINKER_FLAGS CMAKE_MODULE_LINKER_FLAGS CMAKE_C_STANDARD CMAKE_CXX_STANDARD
         CMAKE_C_STANDARD_REQUIRED CMAKE_CXX_STANDARD_REQUIRED CMAKE_C_EXTENSIONS CMAKE_CXX_EXTENSIONS
-        CMAKE_ANDROID_NDK CMAKE_ANDROID_ARCH_ABI CMAKE_ANDROID_API CMAKE_ANDROID_STL_TYPE)
+        CMAKE_ANDROID_NDK CMAKE_ANDROID_ARCH_ABI CMAKE_ANDROID_API CMAKE_ANDROID_STL_TYPE
+        ANDROID_ABI ANDROID_PLATFORM ANDROID_STL)
     string(TOUPPER "${DEP_CONFIGURATION}" _configuration)
     foreach(_language C CXX EXE_LINKER SHARED_LINKER MODULE_LINKER STATIC_LINKER)
         list(APPEND _variables "CMAKE_${_language}_FLAGS_${_configuration}")

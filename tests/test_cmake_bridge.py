@@ -94,6 +94,34 @@ file(WRITE "${{CMAKE_CURRENT_LIST_DIR}}/results.txt" "${{header}}\n${{base}}\n${
         failed = self.run_cmake("set(mode OFFLINE)\n" + body, success=False)
         self.assertIn("modified", failed.stderr)
 
+    def test_android_abi_platform_and_stl_reach_the_toolchain_probe(self):
+        # The NDK's own ABI defaults (armeabi-v7a / android-21) must never be
+        # used when the consumer selected something else: the bridge forwards
+        # the official ANDROID_* entry points, not only the CMAKE_ANDROID_* ones.
+        (self.root / "dependencies.json").write_text(
+            json.dumps({"schema": 2, "dependencies": {}}), encoding="utf-8")
+        (self.root / "recipes.py").write_text(
+            'from forgedeps import ProjectConfig\nCONFIG = ProjectConfig(name="android", recipes=())\n',
+            encoding="utf-8")
+        body = '''set(ANDROID_ABI arm64-v8a)
+set(ANDROID_PLATFORM android-24)
+set(ANDROID_STL c++_shared)
+function(_forgedeps_run output)
+    file(APPEND "${CMAKE_CURRENT_LIST_DIR}/arguments.txt" "${ARGN}\\n")
+    set(${output} "{}" PARENT_SCOPE)
+endfunction()
+function(forgedeps_use_environment)
+endfunction()
+forgedeps_environment(FILE "${CMAKE_CURRENT_LIST_DIR}/dependencies.json"
+    PROJECT_CONFIG "${CMAKE_CURRENT_LIST_DIR}/recipes.py"
+    HOME "${CMAKE_CURRENT_LIST_DIR}/shared" CONFIGURATION Release)
+'''
+        self.run_cmake(body)
+        recorded = (self.root / "arguments.txt").read_text()
+        for value in ("ANDROID_ABI=arm64-v8a", "ANDROID_PLATFORM=android-24",
+                      "ANDROID_STL=c++_shared"):
+            self.assertIn("--cmake-option=-D" + value, recorded)
+
 
 if __name__ == "__main__":
     unittest.main()
