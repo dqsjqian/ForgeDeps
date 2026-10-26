@@ -10,18 +10,34 @@ or library-specific build recipes**. A project can supply its own recipes or
 opt into a separate package such as [ForgeRecipes](https://github.com/dqsjqian/ForgeRecipes).
 There is no dependency from the core package to that catalog.
 
-This branch contains the 0.4 development candidate. The shared-store migration
-and cross-platform acceptance are in progress; no 0.4 release is published yet.
-
 ## Install and choose a workspace
 
-Python 3.10+ and the recipe's build tools are required:
+Python 3.14+ and a C/C++ compiler are required. Install a release by tag and
+register one shared workspace per user:
 
 ```sh
-python -m pip install "git+https://github.com/dqsjqian/ForgeDeps.git@work/forgedeps-shared-store"
+python -m pip install "git+https://github.com/dqsjqian/ForgeDeps.git@v0.4.5"
 forgedeps init /path/to/ForgeDeps
 forgedeps home
 ```
+
+### Bootstrapping a project from a fresh clone
+
+`forgedeps/bootstrap.py` uses only the standard library, so a project can vendor
+it next to its build script and call `ensure("requirements-build.txt")` before
+importing ForgeDeps. On the first run it:
+
+1. resolves the workspace (`FORGEDEPS_HOME`, then the registered workspace,
+   then `~/.forgedeps`, which it registers);
+2. creates `<workspace>/tools/python<X.Y>-<hash of the pins>/`, a virtual
+   environment shared by every project with the same pins, and installs the
+   pinned packages there without touching the user's interpreter;
+3. installs CMake and Ninja into that environment only when they are not on
+   `PATH`;
+4. re-runs the original command with that environment.
+
+A missing compiler is reported with the platform's install command instead of
+being installed. `FORGEDEPS_BOOTSTRAP=0` turns the whole step off.
 
 When running from a ForgeDeps source checkout, its repository root is the default
 workspace. An installed wheel has no repository root: use `init` once or set
@@ -175,6 +191,6 @@ focused-fork policy and release verification.
 python -m unittest discover -s tests -t tests -p 'test_*.py'
 ```
 
-CI runs on Linux, macOS and Windows with Python 3.10 and 3.13. Tests compile and
+CI runs on Linux, macOS and Windows with Python 3.14. Tests compile and
 run independent consumers, exercise source/options changes and preserved mtimes,
 and use separate processes for concurrent builds, readers and killed writers.

@@ -36,7 +36,7 @@ jobs:
       - name: Install distribution
         run: python -m pip install .
       - name: Check installed package outside the source import path
-        run: python -I -c "import forgedeps; from pathlib import Path; from importlib.metadata import version; assert version('forgedeps') == '0.4.4'; assert (Path(forgedeps.__file__).parent / 'cmake/ForgeDeps.cmake').is_file()"
+        run: python -I -c "import forgedeps; from pathlib import Path; from importlib.metadata import version; assert version('forgedeps') == '0.4.5'; assert (Path(forgedeps.__file__).parent / 'cmake/ForgeDeps.cmake').is_file()"
       - name: Check installed command
         run: forgedeps --version
       - name: Resolve, fetch, build, verify and rollback contracts
