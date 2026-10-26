@@ -199,6 +199,29 @@ file(WRITE "${CMAKE_BINARY_DIR}/flags.txt" "${CMAKE_CXX_FLAGS}")
         self.assertTrue(targets[1]["label"].startswith("iossimulator-arm64-"))
         self.assertNotEqual(targets[0]["sdk"], targets[1]["sdk"])
 
+    def test_header_only_recipe_uses_a_real_cmake_configuration(self):
+        # Multi-config generators only know real configurations; the synthetic
+        # "Headers" identity must never reach CMAKE_BUILD_TYPE or a try-compile.
+        from forgedeps.artifacts import BuildContext
+        from forgedeps.environments import _cmake_build
+        target = self.probe()
+        base = self.root / "header-only recipe"
+        source, build, prefix = (base / name for name in ("source", "build", "install"))
+        source.mkdir(parents=True)
+        build.mkdir()
+        (source / "CMakeLists.txt").write_text('''cmake_minimum_required(VERSION 3.21)
+project(HeadersOnly LANGUAGES C CXX)
+file(WRITE "${CMAKE_BINARY_DIR}/config.txt" "${CMAKE_BUILD_TYPE}|${CMAKE_TRY_COMPILE_CONFIGURATION}")
+install(FILES header.h DESTINATION include)
+''', encoding="utf-8")
+        (source / "header.h").write_text("#pragma once\n", encoding="utf-8")
+        ctx = BuildContext(source, build, prefix, (), {"cmake_options": []},
+                           dict(os.environ), target, {}, 2, "Headers")
+        with contextlib.redirect_stderr(io.StringIO()):
+            _cmake_build(ctx)
+        self.assertEqual((build / "config.txt").read_text(encoding="utf-8"), "Release|Release")
+        self.assertTrue((prefix / "include/header.h").is_file())
+
     @unittest.skipUnless(sys.platform == "darwin", "Xcode generator requires macOS")
     def test_xcode_generator_probe_reads_the_real_platform_archive(self):
         # Xcode appends ${EFFECTIVE_PLATFORM_NAME} to TARGET_FILE unless the

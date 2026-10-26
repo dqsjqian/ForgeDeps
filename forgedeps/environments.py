@@ -100,13 +100,18 @@ def _cmake_build(ctx):
             command.append(f'-DCMAKE_{language}_COMPILER:FILEPATH=' + compiler['path'])
             quote = subprocess.list2cmdline if os.name == 'nt' else shlex.join
             command.append(f'-DCMAKE_{language}_COMPILER_ARG1:STRING=' + quote(compiler.get('arguments', [])))
-    command += [f'-DCMAKE_BUILD_TYPE={ctx.configuration}',
-                f'-DCMAKE_TRY_COMPILE_CONFIGURATION={ctx.configuration}',
+    # A header-only recipe carries the synthetic "Headers" identity. Real CMake
+    # configurations are required for the build itself: multi-config generators
+    # (Visual Studio, Xcode) know only their own names, and MSBuild rejects the
+    # synthetic one in a try-compile with MSB8013.
+    configuration = 'Release' if ctx.configuration == 'Headers' else ctx.configuration
+    command += [f'-DCMAKE_BUILD_TYPE={configuration}',
+                f'-DCMAKE_TRY_COMPILE_CONFIGURATION={configuration}',
                 '-DCMAKE_PREFIX_PATH=' + ';'.join(str(path) for path in ctx.dependency_prefixes),
                 f'-DCMAKE_INSTALL_PREFIX={ctx.prefix}']
     ctx.run(command)
-    ctx.run([cmake, '--build', ctx.build_dir, '--parallel', str(ctx.jobs), '--config', ctx.configuration])
-    ctx.run([cmake, '--install', ctx.build_dir, '--config', ctx.configuration])
+    ctx.run([cmake, '--build', ctx.build_dir, '--parallel', str(ctx.jobs), '--config', configuration])
+    ctx.run([cmake, '--install', ctx.build_dir, '--config', configuration])
 
 
 def build_cmake(ctx):
