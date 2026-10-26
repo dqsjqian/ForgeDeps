@@ -85,6 +85,14 @@ class SessionTests(unittest.TestCase):
                     env={}, cwd=self.root, run_command=execute)
         self.assertEqual(seen, [True])
 
+    def test_source_cache_manifest_is_not_a_shared_artifact(self):
+        source = self.root / "build/_deps/archives/source"
+        source.mkdir(parents=True)
+        (source / "manifest.json").write_text('{"schema": 1, "source": "fixture"}')
+        (self.root / "build/CMakeCache.txt").write_text("FETCH_SOURCE_DIR:PATH=" + str(source) + "\n")
+        run_session([["cmake", "-S", ".", "-B", str(self.root / "build")]],
+                    env={}, cwd=self.root, run_command=lambda command, environment: None)
+
     def test_conflicting_generations_stop_before_build(self):
         newer = build_package(replace(self.request, options={"flag": True}), home=self.home)
         second = self.root / "second.json"

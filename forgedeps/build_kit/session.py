@@ -116,11 +116,11 @@ def _prefix_environments(directories, environment):
                 else:
                     # Foo_DIR commonly points below a shared prefix's lib/cmake.
                     for candidate in (path, *path.parents):
-                        if (candidate / "manifest.json").is_file():
+                        if candidate.parent.parent.name == "build" and (candidate / "manifest.json").is_file():
                             prefixes.add(candidate)
                             break
     roots = [verify_artifact(path) for path in sorted(prefixes, key=str)
-             if (path / "manifest.json").exists()]
+             if path.parent.parent.name == "build" and (path / "manifest.json").exists()]
     return [Environment(tuple(roots))] if roots else []
 
 
