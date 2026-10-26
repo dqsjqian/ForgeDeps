@@ -215,10 +215,12 @@ def build_environment(file: Path, *, config: deps.ProjectConfig, home=None,
                     cmake_options=key, environment=environment, home=root)
             target = targets[key]
             for name, value in (expected_settings or {}).items():
-                if str(target.get('cmake', {}).get(name, '')) != value:
-                    raise ValueError(f'Consumer {name} differs from the dependency toolchain probe; '
-                                     'express additional ABI settings through CMake cache options '
-                                     'or an explicit toolchain input, then rebuild the environment')
+                actual = str(target.get('cmake', {}).get(name, ''))
+                if actual != value:
+                    raise ValueError(f'Consumer {name} differs from the dependency toolchain probe '
+                                     f'(consumer {value!r}, probe {actual!r}); express additional ABI '
+                                     'settings through CMake cache options or an explicit toolchain '
+                                     'input, then rebuild the environment')
         build_env = merge_environments(target.get('environment', {}), environment or {})
         # Ambient tool locations are defaults only; an explicit value wins and
         # never joins a case-variant duplicate inherited from the process.
