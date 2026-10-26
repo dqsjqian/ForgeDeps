@@ -200,6 +200,21 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _tool(value: str, env: dict) -> dict:
+    """Record a tool CMake selected, tolerating a name only it can resolve.
+
+    Windows generators resolve ``rc`` from their own environment, so the bare
+    name is not necessarily on this process's PATH. An explicit path still has
+    to exist.
+    """
+    try:
+        return _executable(value, env)
+    except ValueError:
+        if Path(value).name != value:
+            raise
+        return {"path": value, "resolved": False}
+
+
 def _executable(value: str, env: dict) -> dict:
     path = shutil.which(value, path=env.get("PATH")) if value else None
     if not path:
@@ -419,7 +434,7 @@ def probe_toolchain(*, configuration="Release", c=None, cxx=None, toolchain=None
             if record[variable] and not (variable == "CMAKE_RANLIB" and record[variable] == ":"):
                 # MSVC archives do not use ranlib; CMake records the no-op ':'
                 # rather than a binary. Keep that value in cmake, not tools.
-                tools[variable.removeprefix("CMAKE_").lower()] = _executable(record[variable], env)
+                tools[variable.removeprefix("CMAKE_").lower()] = _tool(record[variable], env)
         result = {"label": label, "platform": platform, "machine": machine,
                   "configuration": configuration, **compilers, "cmake": record,
                   # Toolchains may prepend their flags to cache inputs. Keep

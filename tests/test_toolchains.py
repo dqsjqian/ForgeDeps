@@ -299,6 +299,18 @@ install(FILES header.h DESTINATION include)
         self.skipTest("Native GCC unavailable")
 
 
+class ToolResolutionTests(unittest.TestCase):
+    def test_generator_resolved_bare_name_is_recorded_without_a_hash(self):
+        from forgedeps.toolchains import _tool
+        recorded = _tool("definitely-not-on-path-rc", {"PATH": "/nonexistent"})
+        self.assertEqual(recorded, {"path": "definitely-not-on-path-rc", "resolved": False})
+
+    def test_explicit_missing_path_still_fails_closed(self):
+        from forgedeps.toolchains import _tool
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            _tool("/definitely/missing/rc", {"PATH": "/nonexistent"})
+
+
 class TargetLabelTests(unittest.TestCase):
     def test_msvc_patch_is_metadata_not_a_label_segment(self):
         marker = {"C": [{"arch": "x86_64", "platform": "windows"}]}
