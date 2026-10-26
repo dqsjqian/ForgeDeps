@@ -18,7 +18,7 @@ env:
 
 jobs:
   tests:
-    name: Offline contracts (${{ matrix.os }}, Python ${{ env.PYTHON_VERSION }})
+    name: Offline contracts (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
