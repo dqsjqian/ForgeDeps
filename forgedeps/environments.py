@@ -41,6 +41,12 @@ def _ordered(recipes, only):
     return result
 
 
+
+def _setting_tokens(name, value):
+    """Compare flag variables by token, every other setting exactly."""
+    text = str(value)
+    return tuple(text.split()) if '_FLAGS' in name else text
+
 def _cmake_build(ctx):
     target = ctx.target
     options = list(ctx.options['cmake_options'])
@@ -216,7 +222,10 @@ def build_environment(file: Path, *, config: deps.ProjectConfig, home=None,
             target = targets[key]
             for name, value in (expected_settings or {}).items():
                 actual = str(target.get('cmake', {}).get(name, ''))
-                if actual != value:
+                # Flag strings are whitespace-separated tokens. CMake keeps a
+                # trailing space on some MSVC defaults (``/Zi /Ob0 /Od ``) in a
+                # configured project but not in the probe, which is the same ABI.
+                if _setting_tokens(name, actual) != _setting_tokens(name, value):
                     raise ValueError(f'Consumer {name} differs from the dependency toolchain probe '
                                      f'(consumer {value!r}, probe {actual!r}); express additional ABI '
                                      'settings through CMake cache options or an explicit toolchain '
