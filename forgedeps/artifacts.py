@@ -11,6 +11,19 @@ import threading
 from typing import Callable, Mapping, Sequence
 
 
+def artifact_present(prefix: Path, artifact: str) -> bool:
+    """Accept the equivalent static-library spelling on Windows toolchains."""
+    candidate = Path(prefix) / artifact
+    if candidate.is_file():
+        return True
+    if not artifact.endswith(".a") or not candidate.parent.is_dir():
+        return False
+    stem = candidate.stem.removeprefix("lib")
+    names = {name + suffix for name in (stem, "lib" + stem) for suffix in (".a", ".lib")}
+    return any(entry.is_file() and entry.name.lower() in names
+               for entry in candidate.parent.iterdir())
+
+
 @dataclass(frozen=True)
 class Artifact:
     name: str

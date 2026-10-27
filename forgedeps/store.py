@@ -22,7 +22,7 @@ import tempfile
 import time
 import uuid
 
-from .artifacts import Artifact, BuildContext, BuildRequest, Environment
+from .artifacts import Artifact, BuildContext, BuildRequest, Environment, artifact_present
 from .home import prepare_home, resolve_home
 from .leases import artifact_graph, slot_locks
 from .process_environment import merge_environments, select_environment
@@ -504,7 +504,7 @@ def build_package(request: BuildRequest, *, home: Path | None = None, force: boo
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(original, destination)
             for relative in artifacts:
-                if not (prefix / relative).is_file():
+                if not artifact_present(prefix, relative):
                     raise ValueError(f"Expected installed artifact is missing: {relative}")
             if request.validate is not None:
                 request.validate(context)

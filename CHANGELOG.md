@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.10 — 2026-10-27
+
+- Validate installed static-library artifacts with the same `.a`/`.lib` spelling
+  equivalence used by recipe builds, so MSVC-produced curl archives pass the
+  store's final integrity check.
+
 ## [0.4.0] - 2026-10-26
 
 - Add a shared artifact workspace with one current installation per library and

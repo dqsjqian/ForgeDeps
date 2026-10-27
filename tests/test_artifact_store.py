@@ -158,6 +158,18 @@ class StoreTests(unittest.TestCase):
         with Environment((first,)).lease():
             verify_request(self.request(), first, home=self.home)
 
+    def test_build_store_accepts_windows_static_library_spelling(self):
+        def builder(ctx):
+            library = ctx.prefix / "lib/fixture.lib"
+            library.parent.mkdir(parents=True)
+            library.write_bytes(b"static library")
+
+        request = BuildRequest("tiny", self.source, builder, {"recipe.py": Path(__file__)},
+                               {"label": "test-release"}, artifacts=("lib/libfixture.a",))
+        artifact = self.build(request)
+        self.assertTrue((artifact.prefix / "lib/fixture.lib").is_file())
+        self.assertEqual(verify_artifact(artifact), artifact)
+
     def test_pure_headers_ignore_ambient_compiler_selectors(self):
         request = self.request(header_only=True, target={})
         with mock.patch.dict(os.environ, {"CC": "first-compiler", "CXX": "first-cxx"}):

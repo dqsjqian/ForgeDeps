@@ -54,6 +54,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from . import deps_sources as sources
 from . import fsops
+from .artifacts import artifact_present
 from ._console import safe_print as print
 
 
@@ -1193,19 +1194,6 @@ def copy_licenses(prefix: Path, source: Path, dependency: Dependency) -> list[st
     if dependency.post_install is not None:
         copied.extend(dependency.post_install(prefix, source, dependency))
     return copied
-
-
-def artifact_present(prefix: Path, artifact: str) -> bool:
-    """Require a real header/config or an exact static-library platform spelling."""
-    candidate = prefix / artifact
-    if candidate.is_file():
-        return True
-    if not artifact.endswith('.a') or not candidate.parent.is_dir():
-        return False
-    stem = candidate.stem.removeprefix('lib')
-    stems = (stem, 'lib' + stem)
-    names = {name + suffix for name in stems for suffix in ('.a', '.lib')}
-    return any(entry.is_file() and entry.name.lower() in names for entry in candidate.parent.iterdir())
 
 
 def windows_toolchain() -> str:
