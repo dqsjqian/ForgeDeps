@@ -42,6 +42,30 @@ def _ordered(recipes, only):
 
 
 
+
+def recipe_flag_values(options):
+    """Flag variables a recipe set through -D options, by name."""
+    values = {}
+    for option in options:
+        if not option.startswith('-D'):
+            continue
+        name, _, value = option[2:].partition('=')
+        name = name.split(':', 1)[0]
+        if '_FLAGS' in name and value != '':
+            values[name] = value
+    return values
+
+
+def merge_flag_value(recipe_value, replay_value):
+    """Keep recipe defines and append the probed flags behind them."""
+    recipe_value = (recipe_value or '').strip()
+    replay_value = (replay_value or '').strip()
+    if not recipe_value:
+        return replay_value
+    if not replay_value or replay_value in recipe_value:
+        return recipe_value
+    return recipe_value + ' ' + replay_value
+
 def _setting_tokens(name, value):
     """Compare flag variables by token, every other setting exactly."""
     text = str(value)
@@ -88,6 +112,7 @@ def _cmake_build(ctx):
             'STANDARD', 'STANDARD_REQUIRED', 'EXTENSIONS'))
     if settings.get('CMAKE_CROSSCOMPILING') == 'TRUE':
         replay.update(('CMAKE_SYSTEM_NAME', 'CMAKE_SYSTEM_VERSION', 'CMAKE_SYSTEM_PROCESSOR'))
+    added_flags = recipe_flag_values(options)
     for key, value in sorted(settings.items()):
         is_flags = key.startswith('CMAKE_') and '_FLAGS' in key
         # Empty flags must also be pinned, rather than reinitialized from a
@@ -97,6 +122,12 @@ def _cmake_build(ctx):
                 # NDK and other toolchains prepend platform flags to these
                 # cache inputs. Replaying the final normal value doubles them.
                 value = target.get('cmake_cache', {}).get(key, value)
+                # A recipe that puts its own defines in a flag variable (curl
+                # needs NGTCP2_STATICLIB for static QUIC backends) must keep
+                # them: emitting the probed value alone overwrote them, and the
+                # consumer then linked dllimport stubs against a static library.
+                if key in added_flags:
+                    value = merge_flag_value(added_flags[key], value)
             command.append(f'-D{key}:STRING={value}')
     generator = settings.get('CMAKE_GENERATOR')
     if generator:
