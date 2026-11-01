@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.11 — 2026-11-01
+
+- Stop a parent leased session's receipt from leaking into nested recipe builds: `deps_build.build_cmake` now runs its cmake invocations with a child environment stripped of `FORGEDEPS_ENVIRONMENT`/`FORGEDEPS_ENVIRONMENTS` (case-insensitive, Windows semantics).
+- Only append `--check` in `ForgeDeps.cmake` when the output already exists; a first configure inside a leased parent session generates the output instead of failing with Errno 2 on the not-yet-generated `forgedeps-environment.json`. Existing outputs still verify as before.
+
 ## 0.4.10 — 2026-10-27
 
 - Validate installed static-library artifacts with the same `.a`/`.lib` spelling
