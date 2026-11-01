@@ -84,7 +84,13 @@ function(forgedeps_environment)
     endif()
     set(_arguments environment --file "${DEP_FILE}" --project-config "${DEP_PROJECT_CONFIG}"
         --output "${DEP_OUTPUT}" --build-config "${DEP_CONFIGURATION}")
-    if(DEP_CHECK OR NOT "$ENV{FORGEDEPS_ENVIRONMENT}" STREQUAL "" OR NOT "$ENV{FORGEDEPS_ENVIRONMENTS}" STREQUAL "")
+    # Verification mode only makes sense against an output that already
+    # exists. A first configure inside a leased parent session must not
+    # be forced into --check (which reads the not-yet-generated output
+    # and fails with Errno 2); it generates the output instead. An
+    # explicit CHECK request is gated the same way: a missing output
+    # is a first generation, not a verification failure.
+    if((DEP_CHECK OR NOT "$ENV{FORGEDEPS_ENVIRONMENT}" STREQUAL "" OR NOT "$ENV{FORGEDEPS_ENVIRONMENTS}" STREQUAL "") AND EXISTS "${DEP_OUTPUT}")
         list(APPEND _arguments --check)
     endif()
     foreach(_field ONLY PROFILE TLS_BACKEND HOME)

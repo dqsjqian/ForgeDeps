@@ -1206,9 +1206,23 @@ def windows_toolchain() -> str:
     return 'msvc' if shutil.which('cl') and shutil.which('nmake') else 'mingw'
 
 
+def child_environment_without_lease() -> dict[str, str]:
+    """Return a child-process environment without a parent ForgeDeps lease.
+
+    A parent leased session must not leak its receipt across a recipe
+    boundary into a grandchild configure: the child dependency's own
+    session generates its own receipt. Environment names are compared
+    case-insensitively, matching Windows semantics (see process_environment).
+    """
+    lease_names = {'forgedeps_environment', 'forgedeps_environments'}
+    return {name: value for name, value in os.environ.items()
+            if name.casefold() not in lease_names}
+
+
 def build_cmake(source: Path, build: Path, prefix: Path, jobs: int,
                 dependency: Dependency, common: list[str], config: str = 'Release') -> None:
     generator = os.environ.get('CMAKE_GENERATOR', '').strip()
+    child_environment = child_environment_without_lease()
     selected = windows_toolchain() if sys.platform == 'win32' else ''
     visual_studio = generator.lower().startswith('visual studio') or (not generator and selected == 'msvc')
     configure = ['cmake']
@@ -1219,11 +1233,13 @@ def build_cmake(source: Path, build: Path, prefix: Path, jobs: int,
     elif not generator and selected == 'mingw':
         configure += ['-G', 'Ninja' if shutil.which('ninja') else 'MinGW Makefiles']
     libdir = ['-DCMAKE_INSTALL_LIBDIR=lib'] if dependency.uses_libdir else []
-    run([*configure, '-S', str(source), '-B', str(build), *common, *libdir, *dependency.options])
+    run([*configure, '-S', str(source), '-B', str(build), *common, *libdir, *dependency.options],
+        env=child_environment)
     # --config is accepted by single-config generators and required by VS,
     # Xcode and Ninja Multi-Config, including MSVC builds without a VS generator.
-    run(['cmake', '--build', str(build), '--parallel', str(jobs), '--config', config])
-    run(['cmake', '--install', str(build), '--config', config])
+    run(['cmake', '--build', str(build), '--parallel', str(jobs), '--config', config],
+        env=child_environment)
+    run(['cmake', '--install', str(build), '--config', config], env=child_environment)
 
 
 def sha256(path: Path) -> str:
@@ -1354,9 +1370,9 @@ def extract(archive: Path, destination: Path, root_name: str) -> Path:
     return entries[0]
 
 
-def run(command: list[str], cwd: Path | None = None) -> None:
+def run(command: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
     print("+ " + shlex.join(command), flush=True)
-    subprocess.run(command, check=True, cwd=str(cwd) if cwd else None)
+    subprocess.run(command, check=True, cwd=str(cwd) if cwd else None, env=env)
 
 
 def fetch_git(work: Path, workspace: Path, dependency: Dependency, offline: bool) -> None:
