@@ -71,6 +71,53 @@ def _setting_tokens(name, value):
     text = str(value)
     return tuple(text.split()) if '_FLAGS' in name else text
 
+
+def _canonical_options(options, target):
+    """Execute and identify the same effective settings at Python/CMake entries.
+
+    The bridge spells out defaults which a Python caller can omit. Keep every
+    unprobed recipe option, and replace only settings whose final values are
+    recorded by the probe. Flag cache inputs, rather than toolchain-expanded
+    normal values, must be replayed to avoid applying platform flags twice.
+    """
+    settings = target['cmake']
+    names = set(_REPLAY_SETTINGS)
+    names.update(name for name in settings if name.startswith('CMAKE_') and '_FLAGS' in name)
+    if settings.get('CMAKE_CROSSCOMPILING') == 'TRUE':
+        names.update(('CMAKE_SYSTEM_NAME', 'CMAKE_SYSTEM_VERSION', 'CMAKE_SYSTEM_PROCESSOR'))
+    result = [option for option in options
+              if not (option.startswith('-D') and
+                      option[2:].split('=', 1)[0].split(':', 1)[0] in names)]
+    for name in sorted(names):
+        value = settings.get(name, '')
+        is_flags = '_FLAGS' in name
+        if is_flags:
+            value = target.get('cmake_cache', {}).get(name, value)
+        if value or is_flags:
+            result.append(f'-D{name}={value}')
+    return result
+
+
+# Settings replayed both into a recipe build and its nested environment. Keep
+# this list shared so normal-variable defaults cannot create a second identity.
+_REPLAY_SETTINGS = {
+    'BUILD_SHARED_LIBS', 'CMAKE_POSITION_INDEPENDENT_CODE',
+    'CMAKE_C_VISIBILITY_PRESET', 'CMAKE_CXX_VISIBILITY_PRESET', 'CMAKE_VISIBILITY_INLINES_HIDDEN',
+    'CMAKE_INTERPROCEDURAL_OPTIMIZATION', 'CMAKE_MSVC_RUNTIME_LIBRARY',
+    'CMAKE_MSVC_DEBUG_INFORMATION_FORMAT', 'CMAKE_SYSROOT', 'CMAKE_SYSROOT_COMPILE',
+    'CMAKE_SYSROOT_LINK', 'CMAKE_OSX_SYSROOT', 'CMAKE_OSX_ARCHITECTURES',
+    'CMAKE_OSX_DEPLOYMENT_TARGET', 'CMAKE_ANDROID_NDK', 'CMAKE_ANDROID_ARCH_ABI',
+    'CMAKE_ANDROID_API', 'CMAKE_ANDROID_STL_TYPE', 'CMAKE_ANDROID_NDK_TOOLCHAIN_VERSION',
+    'CMAKE_MAKE_PROGRAM', 'CMAKE_AR', 'CMAKE_RANLIB', 'CMAKE_LINKER',
+    'CMAKE_RC_COMPILER', 'CMAKE_GENERATOR_INSTANCE', 'CMAKE_TOOLCHAIN_FILE',
+    'CMAKE_VS_PLATFORM_TOOLSET', 'CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION',
+}
+for _language in ('C', 'CXX'):
+    _REPLAY_SETTINGS.update('CMAKE_' + _language + '_' + suffix for suffix in (
+        'COMPILER_TARGET', 'COMPILER_EXTERNAL_TOOLCHAIN', 'COMPILER_LAUNCHER',
+        'STANDARD', 'STANDARD_REQUIRED', 'EXTENSIONS'))
+
+
 def _cmake_build(ctx):
     target = ctx.target
     options = list(ctx.options['cmake_options'])
@@ -94,22 +141,7 @@ def _cmake_build(ctx):
     # Pin the configuration that was actually probed. In particular, normal
     # variables set by toolchain files and environment-initialized flags are
     # not necessarily cache entries that a later project can reconstruct.
-    replay = {
-        'BUILD_SHARED_LIBS', 'CMAKE_POSITION_INDEPENDENT_CODE',
-        'CMAKE_C_VISIBILITY_PRESET', 'CMAKE_CXX_VISIBILITY_PRESET', 'CMAKE_VISIBILITY_INLINES_HIDDEN',
-        'CMAKE_INTERPROCEDURAL_OPTIMIZATION', 'CMAKE_MSVC_RUNTIME_LIBRARY',
-        'CMAKE_MSVC_DEBUG_INFORMATION_FORMAT', 'CMAKE_SYSROOT', 'CMAKE_SYSROOT_COMPILE',
-        'CMAKE_SYSROOT_LINK', 'CMAKE_OSX_SYSROOT', 'CMAKE_OSX_ARCHITECTURES',
-        'CMAKE_OSX_DEPLOYMENT_TARGET', 'CMAKE_ANDROID_NDK', 'CMAKE_ANDROID_ARCH_ABI',
-        'CMAKE_ANDROID_API', 'CMAKE_ANDROID_STL_TYPE', 'CMAKE_ANDROID_NDK_TOOLCHAIN_VERSION',
-        'CMAKE_MAKE_PROGRAM', 'CMAKE_AR', 'CMAKE_RANLIB', 'CMAKE_LINKER',
-        'CMAKE_RC_COMPILER', 'CMAKE_GENERATOR_INSTANCE', 'CMAKE_TOOLCHAIN_FILE',
-        'CMAKE_VS_PLATFORM_TOOLSET', 'CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION',
-    }
-    for language in ('C', 'CXX'):
-        replay.update('CMAKE_' + language + '_' + suffix for suffix in (
-            'COMPILER_TARGET', 'COMPILER_EXTERNAL_TOOLCHAIN', 'COMPILER_LAUNCHER',
-            'STANDARD', 'STANDARD_REQUIRED', 'EXTENSIONS'))
+    replay = set(_REPLAY_SETTINGS)
     if settings.get('CMAKE_CROSSCOMPILING') == 'TRUE':
         replay.update(('CMAKE_SYSTEM_NAME', 'CMAKE_SYSTEM_VERSION', 'CMAKE_SYSTEM_PROCESSOR'))
     added_flags = recipe_flag_values(options)
@@ -255,6 +287,8 @@ def build_environment(file: Path, *, config: deps.ProjectConfig, home=None,
                     configuration=configuration, c=c, cxx=cxx, toolchain=toolchain,
                     cmake_options=key, environment=environment, home=root)
             target = targets[key]
+            options = _canonical_options(options, target)
+            target = {**target, 'cmake_options': options}
             for name, value in (expected_settings or {}).items():
                 actual = str(target.get('cmake', {}).get(name, ''))
                 # Flag strings are whitespace-separated tokens. CMake keeps a

@@ -12,6 +12,7 @@ from dataclasses import replace
 from forgedeps import Dependency, ProjectConfig
 from forgedeps import deps_build as deps
 from forgedeps.environments import build_environment, read_environment, verify_environment, write_environment
+from forgedeps.build_kit.session import leased_environment
 
 
 @unittest.skipUnless(shutil.which('cmake'), 'CMake unavailable')
@@ -100,6 +101,48 @@ add_test(NAME actual-shared-library COMMAND consumer)
         cyclic = replace(self.recipe, requires=('fixture',))
         with self.assertRaisesRegex(ValueError, 'Cyclic'):
             build_environment(self.lock, config=ProjectConfig(name='cycle', recipes=(cyclic,)), **self.kwargs)
+
+    def test_nested_strict_cpp_configure_reuses_prepared_dependency(self):
+        # AriaAgent prepares the graph before Mira's CMakeLists makes C++23
+        # strict and forwards its effective PIC/empty flag values to the bridge.
+        config = ProjectConfig(name='outer', recipes=(self.recipe,))
+        options = ('-DCMAKE_CXX_STANDARD=23', '-DCMAKE_CXX_STANDARD_REQUIRED=ON')
+        selected = build_environment(self.lock, config=config, cmake_options=options, **self.kwargs)
+        artifact = selected.artifacts[0]
+        manifest = artifact.manifest.read_bytes()
+        parent = self.root / 'nested-strict'
+        parent.mkdir()
+        recipe = parent / 'recipes.py'
+        recipe.write_text('from forgedeps import Dependency, ProjectConfig\n'
+                          f'CONFIG = ProjectConfig(name="inner", recipes=({self.recipe!r},))\n')
+        module = Path(__file__).resolve().parents[1] / 'forgedeps/cmake/ForgeDeps.cmake'
+        (parent / 'CMakeLists.txt').write_text(f'''cmake_minimum_required(VERSION 3.21)
+project(Nested LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+include("{module.as_posix()}")
+forgedeps_environment(FILE "{self.lock.as_posix()}" PROJECT_CONFIG "{recipe.as_posix()}"
+    ONLY fixture PROFILE mira HOME "{self.home.as_posix()}"
+    SOURCE_OVERRIDES "fixture={self.source.as_posix()}")
+''')
+        command = ['cmake', '-S', str(parent), '-B', str(parent / 'build'),
+                   '-G', json.loads(manifest)['inputs']['target']['cmake']['CMAKE_GENERATOR'],
+                   '-DCMAKE_BUILD_TYPE=Release', f'-DForgeDeps_PYTHON_EXECUTABLE={sys.executable}']
+        environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+        with leased_environment([selected], env=environment) as child_env:
+            for _ in range(2):  # First configure generates a receipt; second checks it.
+                result = subprocess.run(command, env=child_env, capture_output=True, text=True, timeout=45)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(read_environment(parent / 'build/forgedeps-environment.json'), selected)
+                self.assertEqual(artifact.manifest.read_bytes(), manifest)
+            changed = subprocess.run([*command, '-DCMAKE_C_FLAGS=-DFIXTURE_ABI_CHANGE=1'],
+                                     env=child_env, capture_output=True, text=True, timeout=45)
+            self.assertNotEqual(changed.returncode, 0)
+            self.assertIn('Artifact inputs changed', changed.stdout + changed.stderr)
+            self.assertEqual(artifact.manifest.read_bytes(), manifest)
+        self.assertEqual(list((self.home / 'state/transactions').iterdir()), [])
 
     def test_first_cmake_configure_and_cached_configure_share_identity(self):
         parent = self.root / 'cmake-parent'

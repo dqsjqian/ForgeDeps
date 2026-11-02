@@ -378,7 +378,8 @@ def probe_toolchain(*, configuration="Release", c=None, cxx=None, toolchain=None
         command = [cmake["path"], "-S", str(source), "-B", str(build), *generator,
                    f"-DCMAKE_BUILD_TYPE:STRING={configuration}",
                    f"-DCMAKE_TRY_COMPILE_CONFIGURATION:STRING={configuration}",
-                   "-DCMAKE_POSITION_INDEPENDENT_CODE=ON", "-DBUILD_SHARED_LIBS=OFF", *options,
+                   "-DCMAKE_POSITION_INDEPENDENT_CODE=ON", "-DBUILD_SHARED_LIBS=OFF",
+                   "-DCMAKE_CXX_EXTENSIONS=OFF", "-DCMAKE_CXX_STANDARD_REQUIRED=ON", *options,
                    *_compiler_options("C", c), *_compiler_options("CXX", cxx)]
         if selected_toolchain:
             command.append("-DCMAKE_TOOLCHAIN_FILE:FILEPATH=" + selected_toolchain)
@@ -462,6 +463,11 @@ def probe_toolchain(*, configuration="Release", c=None, cxx=None, toolchain=None
         for variable, key in (("CC", "c"), ("CXX", "cxx")):
             result["environment"][variable] = quote([
                 compilers[key]["path"], *compilers[key].get("arguments", [])])
+        # CMake exports these selectors to a bridge invocation, while Python
+        # can let the probe choose them. The resolved generator is authoritative.
+        for variable in ('CMAKE_GENERATOR', 'CMAKE_GENERATOR_PLATFORM', 'CMAKE_GENERATOR_TOOLSET'):
+            if record[variable]:
+                result['environment'][variable] = record[variable]
         # File API backtraces are indexes into this temporary project, not ABI.
         def stable(value):
             if isinstance(value, dict):

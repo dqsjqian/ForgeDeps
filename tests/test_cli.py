@@ -123,7 +123,7 @@ CONFIG = ProjectConfig(name="external-fixture", recipes=(Dependency(
     def test_cmake_module_and_command_version_are_available(self):
         directory = Path(self.run_cli("cmake-dir").stdout.strip())
         self.assertTrue((directory / "ForgeDeps.cmake").is_file())
-        self.assertEqual(self.run_cli("--version").stdout.strip(), "forgedeps 0.4.12")
+        self.assertEqual(self.run_cli("--version").stdout.strip(), "forgedeps 0.4.13")
 
 
 if __name__ == "__main__":

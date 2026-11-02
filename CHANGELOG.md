@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.13 — 2026-11-02
+
+- Canonicalize probed CMake settings before recipe execution and fingerprinting,
+  so explicit PIC and empty flag defaults from nested CMake environments reuse
+  the same prepared artifact generation as a Python build driver. Keep unknown
+  recipe options and actual compiler/ABI differences as exact inputs.
+- Prepare compiled environments with strict C++ defaults (extensions off and
+  standard required), while honoring explicit caller overrides. Nested strict
+  C++ projects no longer request a different dialect after dependencies are leased.
+- Record the resolved generator consistently whether selected implicitly or
+  forwarded by CMake. Preserve flag-cache replay for additive toolchain files.
+- Retain one current slot per library/target, transactional top-level upgrades,
+  full-session reader leases and all source/recipe/inventory checks. Existing
+  environments must be prepared through the normal top-level entry after upgrade.
+- Cover first and cached nested configure under a parent lease, unchanged
+  manifests on reuse, and rejection of genuine flag changes without mutation.
+
 ## 0.4.12 — 2026-11-02
 
 - Reuse matching, verified artifact slots under shared locks before requesting

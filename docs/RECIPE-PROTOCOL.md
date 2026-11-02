@@ -58,6 +58,25 @@ Installation prefix and dependency prefix search are managed by ForgeDeps;
 express required libraries through the dependency graph. Custom builders must
 honor the same probed toolchain, or explicitly reject unsupported settings.
 
+The environment adapter canonicalizes probed CMake settings before both
+execution and fingerprinting. Explicit PIC and empty flag defaults from the
+CMake bridge therefore agree with a Python driver's implicit defaults. Unknown
+recipe options remain exact inputs. Toolchain-expanded flags are replayed from
+their original cache inputs, so platform flags are not applied twice.
+
+Compiled environments default to `CMAKE_CXX_EXTENSIONS=OFF` and
+`CMAKE_CXX_STANDARD_REQUIRED=ON`. The caller still chooses the C++ standard and
+can explicitly override these defaults. This prepares a strict C++ dependency
+graph before entering nested projects which require that same standard.
+
+When upgrading from 0.4.12, prepare the environment once through the normal
+top-level build entry before starting a leased session. An old installation is
+replaced transactionally if its inputs differ; existing reader leases retain
+their protection. Do not regenerate receipts or relabel old binaries by hand.
+After preparation, equivalent nested requests reuse the exact same generation.
+Genuine source, recipe or ABI changes still require preparation outside the
+parent lease; a nested configure cannot safely replace a library already in use.
+
 ## Lifetimes
 
 `build_package` returns an immutable reference to one generation. A later
