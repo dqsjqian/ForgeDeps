@@ -130,6 +130,21 @@ forgedeps_environment(FILE "{self.lock.as_posix()}" PROJECT_CONFIG "{config.as_p
                                    capture_output=True, text=True)
         self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
         self.assertEqual(before, receipt.read_bytes())
+        # Mira's first nested TLS configure has no output receipt yet. It
+        # must generate one by consuming the parent's generation, without
+        # attempting to acquire an exclusive lock on that same dependency.
+        nested = parent / 'fresh-nested-build'
+        fresh = [*command[:command.index('-B') + 1], str(nested),
+                 *command[command.index('-B') + 2:]]
+        manifests = {artifact.manifest: artifact.manifest.read_bytes() for artifact in selected.artifacts}
+        with selected.lease():
+            first_nested = subprocess.run(fresh, env={**environment,
+                'FORGEDEPS_ENVIRONMENT': str(receipt),
+                'FORGEDEPS_ENVIRONMENTS': json.dumps([str(receipt)])},
+                capture_output=True, text=True, timeout=30)
+        self.assertEqual(first_nested.returncode, 0, first_nested.stdout + first_nested.stderr)
+        self.assertEqual(read_environment(nested / 'forgedeps-environment.json'), selected)
+        self.assertEqual(manifests, {path: path.read_bytes() for path in manifests})
 
 
 if __name__ == '__main__':

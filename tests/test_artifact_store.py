@@ -18,6 +18,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from forgedeps.artifacts import Artifact, BuildRequest, Environment
 from forgedeps.home import prepare_home, register_workspace, resolve_home
+from forgedeps.environments import write_environment
 from forgedeps.leases import ArtifactLease
 from forgedeps.store import build_package, ensure_environment, verify_artifact, verify_request
 
@@ -86,6 +87,14 @@ with selected.lease():
 """
     ctx.run([sys.executable, "-c", code],
             env={"PYTHONPATH": str(Path(__file__).resolve().parents[1])}, timeout=5)
+    (ctx.prefix / "complete").touch()
+
+
+def dependency_reuse_builder(ctx):
+    # Exercise a real recipe subprocess, with the outer output write-locked
+    # and its declared dependency read-locked throughout the child build.
+    ctx.run([sys.executable, str(Path(__file__).resolve()), "--build",
+             json.dumps(ctx.options["child_request"])], timeout=10)
     (ctx.prefix / "complete").touch()
 
 
@@ -347,6 +356,58 @@ class StoreTests(unittest.TestCase):
         with ArtifactLease(previous):
             with self.assertRaisesRegex(ValueError, "active lease"):
                 self.build(self.request(options={"changed": True}))
+
+    def test_matching_request_reuses_slot_inside_read_lease(self):
+        previous = self.build()
+        with ArtifactLease(previous):
+            self.assertEqual(self.build(), previous)
+        self.assertEqual(self.counter.read_text().splitlines(), ["build"])
+
+    def test_matching_child_reuses_slot_while_parent_holds_read_lease(self):
+        # Legacy recipe adapters can strip the handoff variables. Reuse must
+        # still work without relying on a parent receipt being inherited.
+        record = dict(source=str(self.source), home=str(self.home),
+                      options={"counter": str(self.counter)})
+        previous = Artifact.from_dict(json.loads(self.finish(self.process("--build", **record))))
+        with ArtifactLease(previous):
+            child = self.process("--build", **record)
+            stdout, stderr = child.communicate(timeout=5)
+            self.assertEqual(child.returncode, 0, stderr)
+            self.assertEqual(Artifact.from_dict(json.loads(stdout)), previous)
+        self.assertEqual(self.counter.read_text().splitlines(), ["build"])
+
+    def test_recipe_child_reuses_declared_dependency_under_outer_writer(self):
+        record = dict(source=str(self.source), home=str(self.home),
+                      options={"counter": str(self.counter)})
+        dependency = Artifact.from_dict(json.loads(self.finish(self.process("--build", **record))))
+        built = self.build(self.request(name="outer", builder=dependency_reuse_builder,
+                                       requires=(dependency,), options={"child_request": record},
+                                       artifacts=("complete",), license_files=()))
+        self.assertEqual(verify_artifact(built), built)
+        self.assertEqual(self.counter.read_text().splitlines(), ["build"])
+
+    def test_parent_handoff_rejects_writes_and_input_changes_without_mutation(self):
+        previous = self.build()
+        receipt = self.root / "parent.json"
+        write_environment(receipt, Environment((previous,)))
+        manifest = previous.manifest.read_bytes()
+        with ArtifactLease(previous), mock.patch.dict(os.environ, {
+                "FORGEDEPS_ENVIRONMENT": str(receipt),
+                "FORGEDEPS_ENVIRONMENTS": json.dumps([str(receipt)])}):
+            self.assertEqual(self.build(), previous)
+            with self.assertRaisesRegex(ValueError, "inputs changed"):
+                self.build(self.request(options={"changed": True}))
+            with self.assertRaisesRegex(ValueError, "parent build lease"):
+                self.build(force=True)
+            with self.assertRaisesRegex(ValueError, "parent build lease"):
+                self.build(self.request(name="undeclared"))
+            (self.source / "payload.h").write_text("changed source\n")
+            with self.assertRaisesRegex(ValueError, "inputs changed"):
+                self.build()
+        self.assertEqual(previous.manifest.read_bytes(), manifest)
+        self.assertEqual(verify_artifact(previous), previous)
+        self.assertEqual(self.counter.read_text().splitlines(), ["build"])
+        self.assertEqual(list((self.home / "state/transactions").iterdir()), [])
 
     def test_writer_allows_child_dependency_checks_with_shared_dependency_locks(self):
         base = self.build(self.request(name="base"))

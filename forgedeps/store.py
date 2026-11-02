@@ -268,8 +268,8 @@ def _journal(transaction, value):
     temporary.replace(transaction / "journal.json")
 
 
-def _recover(root, prefix):
-    """Recover a killed writer only while owning this slot's OS lock."""
+def _transactions(root, prefix):
+    """Read this slot's journals without modifying interrupted writers."""
     for transaction in (root / "state/transactions").iterdir():
         if transaction.is_symlink() or not transaction.is_dir():
             continue
@@ -282,6 +282,12 @@ def _recover(root, prefix):
             continue
         if record.get("prefix") != str(prefix):
             continue
+        yield transaction, record
+
+
+def _recover(root, prefix):
+    """Recover a killed writer only while owning this slot's OS lock."""
+    for transaction, record in _transactions(root, prefix):
         if record.get("state") == "committed":
             _verify_slot(prefix)
             fsops.remove_tree(transaction)
@@ -456,6 +462,33 @@ def build_package(request: BuildRequest, *, home: Path | None = None, force: boo
     (root, source, prefix, graph, requires, target, options, environment,
      artifacts, licenses) = _prepare_request(request, home, create=True)
     name, label = request.name, prefix.name
+    # A recipe subprocess can only consume generations declared by its
+    # parent's lease. Never try to upgrade that parent's read lock to a writer.
+    from .build_kit.session import parent_environment
+    parent = parent_environment(merge_environments(os.environ, environment))
+    if parent is not None:
+        expected = artifact_graph(parent.artifacts).get(prefix)
+        if expected is None or force:
+            raise ValueError(f"Cannot build or replace an artifact inside the parent build lease: {prefix}; "
+                             "prepare all dependencies before starting the shared build session")
+        with Environment((expected,)).lease():
+            return verify_request(request, expected, home=root)
+
+    # Even without a handoff receipt (e.g. a legacy recipe adapter), matching
+    # readers must coexist. Drop these read locks before the writer path and
+    # recheck everything there; another process may replace the slot meanwhile.
+    with slot_locks([prefix, *graph], shared=True):
+        pending = any(record.get("state") in ("installing", "committed")
+                      for _, record in _transactions(root, prefix))
+        if prefix.exists() and not pending and not force:
+            previous = _verify_slot(prefix)
+            for dependency in graph.values():
+                verify_artifact(dependency)
+            inputs, _, _ = _request_inputs(
+                request, source, requires, target, options, environment, artifacts, licenses)
+            if previous.fingerprint == _fingerprint(inputs):
+                return previous
+
     with slot_locks([prefix, *graph], write_prefixes=(prefix,)):
         _recover(root, prefix)
         for dependency in graph.values():

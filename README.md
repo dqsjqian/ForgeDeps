@@ -149,6 +149,18 @@ the previous verified installation; a journal allows recovery after an abruptly
 terminated writer. Changed installed files receive fresh timestamps so ordinary
 incremental builds also rebuild after an upstream header with an old mtime changes.
 
+Matching installations are verified and reused under shared locks. A nested
+recipe process with an inherited environment receipt may only consume the
+declared generations; changed inputs, missing dependencies and `--force` fail
+immediately. Prepare those dependencies before entering the parent build session.
+A first nested CMake configure can generate its own receipt from that selection.
+
+After a terminated build, stop the entire old process tree and rerun the original
+top-level build. The next writer recovers an `installing` journal under the slot's
+exclusive lock, restoring any verified previous installation and preserving failed
+output for diagnosis. Keep the transaction directory, its `previous` backup and
+lock files intact; deleting them can discard recovery data or split active locks.
+
 A source selection change replaces only an unchanged managed source workspace.
 Local edits and unknown directories are preserved. An incompatible lock change
 fails explicitly instead of relabelling the old source as the new version.

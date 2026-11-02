@@ -66,7 +66,7 @@ def versions(values: list[str], *, allow_empty=False) -> dict[str, str]:
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
-    root.add_argument("--version", action="version", version="forgedeps 0.4.0")
+    root.add_argument("--version", action="version", version="forgedeps 0.4.12")
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("cmake-dir", help="print the installed CMake module directory")
     commands.add_parser("home", help="print the shared workspace directory")

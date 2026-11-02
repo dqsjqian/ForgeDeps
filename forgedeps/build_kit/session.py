@@ -52,12 +52,18 @@ def merge_environments(paths) -> Environment:
     return Environment(tuple(graph.values()))
 
 
+def parent_environment(environment=None):
+    """Return the declared parent graph, or None for an independent build."""
+    paths = _parent_receipts(os.environ if environment is None else environment)
+    return None if paths is None else merge_environments(paths)
+
+
 def assert_parent_covers_environment(selected: Environment, environment=None):
     """A child may only consume generations held by its parent's build lease."""
-    paths = _parent_receipts(os.environ if environment is None else environment)
-    if paths is None:
+    parent = parent_environment(environment)
+    if parent is None:
         return
-    covered = artifact_graph(merge_environments(paths).artifacts)
+    covered = artifact_graph(parent.artifacts)
     for prefix, artifact in artifact_graph(selected.artifacts).items():
         if covered.get(prefix) != artifact:
             raise ValueError(f"Dependency is outside the parent build lease: {prefix}; "

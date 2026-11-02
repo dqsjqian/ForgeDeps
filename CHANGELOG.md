@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.12 — 2026-11-02
+
+- Reuse matching, verified artifact slots under shared locks before requesting
+  an exclusive writer. Nested dependency builds no longer wait on their own
+  parent's reader lease when a first configure generates its environment receipt.
+- Treat an inherited build lease as a read-only dependency handoff: verify the
+  declared generation and current inputs, and reject forced, changed or undeclared
+  builds immediately rather than waiting for an impossible lock upgrade.
+- Keep interrupted transaction recovery on the exclusive writer path and recheck
+  inputs after releasing shared locks. Preserve artifact integrity checks and
+  full-session consumer leases.
+- Cover nested recipe subprocesses, first CMake configure under a parent lease,
+  reuse without inherited receipts, and fail-fast write rejection.
+- Report the current release version from the CLI as well as package metadata.
+
 ## 0.4.11 — 2026-11-01
 
 - Stop a parent leased session's receipt from leaking into nested recipe builds: `deps_build.build_cmake` now runs its cmake invocations with a child environment stripped of `FORGEDEPS_ENVIRONMENT`/`FORGEDEPS_ENVIRONMENTS` (case-insensitive, Windows semantics).
